@@ -12,6 +12,7 @@ This guide goes with the code. It explains software architecture from zero. Ever
    3. [Docker Desktop](#13-docker-desktop)
    4. [.NET Aspire (version 05 only)](#14-net-aspire-version-05-only)
    5. [Everyday commands](#15-everyday-commands)
+   6. [First run on a new machine: where the database comes from](#16-first-run-on-a-new-machine-where-the-database-comes-from)
 2. [Project anatomy](#2-project-anatomy)
    1. [Solutions: `.slnx`](#21-solutions-slnx)
    2. [Projects: `.csproj`](#22-projects-csproj)
@@ -199,6 +200,38 @@ dotnet ef database update --project 01-layered/src/Shop.Layered.Data            
 ```
 
 Each data project has a small **design-time factory** (`ShopDbContextFactory`) that tells the tool how to create the `DbContext`, so the data project is all the tool needs: no `--startup-project`, and the API does not have to start.
+
+### 1.6 First run on a new machine: where the database comes from
+
+There is no database dump and no hand-written `CREATE TABLE` script in the repo, and none is needed. A fresh clone gets a working database in two steps, each owned by a different tool:
+
+| What | Created by | When |
+|---|---|---|
+| The PostgreSQL **server** | Docker, from `compose.yaml` | `docker compose up -d` |
+| The four empty **databases** (`shop_layered`, `shop_clean`…) | [`docker/postgres/init.sql`](../docker/postgres/init.sql), run by the PostgreSQL image | Only the first time, when the data volume is empty |
+| The **tables**, indexes and keys of one version | That version's **EF Core migrations**, applied by the API | Every start in Development; a migration already applied is skipped |
+
+So on a new machine, after installing the prerequisites (§1.1–1.3):
+
+```bash
+git clone <repo> && cd architecture-playground
+docker compose up -d                                          # server + empty databases
+dotnet run --project 02-clean-hexagonal/src/Shop.Clean.Api    # creates the tables of shop_clean, then serves on 5102
+```
+
+The **migrations are the schema's source of truth**. They live next to the code (`Migrations/` in each data or infrastructure project), they are versioned with it, and they record which of them a database already has in a table called `__EFMigrationsHistory`. When you pull a change that adds a migration, the next start applies just that one. A separate `.sql` file kept by hand would drift away from the code the first time someone forgot to update it. The contract tests prove the "empty database" path on every run: Testcontainers gives the API a brand-new PostgreSQL, and the API builds the whole schema before the first test.
+
+**Starting over.** `docker compose down -v` deletes the volume. The next `docker compose up -d` recreates the empty databases, and the next start of each API recreates its tables.
+
+**Creating the schema without running the app.** In production, or when someone wants to read the SQL before it touches a database, you do not want an application changing the schema on startup (that is why the APIs migrate in Development only). Generate the SQL from the migrations instead:
+
+```bash
+scripts/create-schemas.sh                      # Bash; on PowerShell: ./scripts/create-schemas.ps1
+scripts/create-schemas.sh 02-clean-hexagonal   # just one version
+docker compose exec -T postgres psql -U shop -d shop_clean < artifacts/sql/02-clean-hexagonal.sql
+```
+
+The scripts write one file per schema to `artifacts/sql/` (git-ignored) with `dotnet ef migrations script --idempotent`. **Idempotent** here means the script checks `__EFMigrationsHistory` before each migration, so it can be run against an empty database, a partly migrated one, or twice in a row. Each new version adds its line to both scripts. Version 04 adds one line per module schema; version 05 creates its databases through Aspire and adds one line per service.
 
 ---
 
@@ -1302,7 +1335,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Microservices**: independently deployable services, each owning one business capability and its data. [§3.2]
 - **Microsoft.Testing.Platform**: the .NET 10 test runner used by `dotnet test` here (the older one is VSTest). [§1.1]
 - **Middleware**: a component of the ASP.NET Core request pipeline; each one can act before and after the next. [§4.4]
-- **Migration (EF Core)**: a versioned, generated description of a database schema change. [§1.5]
+- **Migration (EF Core)**: a versioned, generated description of a database schema change. Applied migrations are recorded in the table `__EFMigrationsHistory`. [§1.5, §1.6]
 - **Model binding**: the framework step that turns route values, query strings and the JSON body into the parameters of an endpoint. [§4.4]
 - **Modular monolith**: one deployable split inside into modules with strict boundaries. [§3.2]
 - **Module**: a part of an application with a clear boundary and a small public surface. [§3.2]

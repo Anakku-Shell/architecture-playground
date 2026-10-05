@@ -42,6 +42,16 @@ dotnet run --project 05-microservices/src/Shop.Micro.AppHost
 
 `docker compose down` stops the database; `docker compose down -v` also deletes its data.
 
+### The database on a new machine
+
+Nothing to set up by hand. `docker compose up -d` starts PostgreSQL and creates one empty database per version ([`docker/postgres/init.sql`](docker/postgres/init.sql)). Each API creates its own tables when it starts in Development, by applying its EF Core migrations, the versioned source of truth for the schema. To get the SQL instead, for example to review it or to create a database without running the app:
+
+```bash
+scripts/create-schemas.sh          # PowerShell: ./scripts/create-schemas.ps1 ; writes artifacts/sql/<version>.sql
+```
+
+Details: [guide §1.6](docs/ARCHITECTURE_GUIDE.md#16-first-run-on-a-new-machine-where-the-database-comes-from).
+
 ## License
 
 [GPL-3.0](LICENSE)
