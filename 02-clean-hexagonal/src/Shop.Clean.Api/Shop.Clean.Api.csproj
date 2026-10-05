@@ -1,0 +1,12 @@
+<!--
+  Api: the driving adapter (HTTP) and the composition root. It references Application to call the use
+  cases and Infrastructure only to register the adapters at startup. Guide: §5.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Clean.Application\Shop.Clean.Application.csproj" />
+    <ProjectReference Include="..\Shop.Clean.Infrastructure\Shop.Clean.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

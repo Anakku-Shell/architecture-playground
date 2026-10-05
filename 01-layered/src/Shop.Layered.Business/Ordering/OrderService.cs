@@ -51,9 +51,10 @@ public sealed partial class OrderService(
             Id = Guid.CreateVersion7(),
             CustomerId = customerId,
             PlacedAt = time.GetUtcNow(),
-            Lines = [.. lines.Select(l => new OrderLine
+            Lines = [.. lines.Select((l, index) => new OrderLine
             {
                 Id = Guid.CreateVersion7(),
+                LineNumber = index + 1,
                 ProductId = l.ProductId,
                 ProductName = catalog[l.ProductId].Name,
                 UnitPrice = catalog[l.ProductId].Price,
@@ -88,7 +89,7 @@ public sealed partial class OrderService(
     }
 
     public async Task<Order> GetAsync(Guid id, CancellationToken cancellationToken) =>
-        await db.Orders.AsNoTracking().Include(o => o.Lines.OrderBy(l => l.Id)).FirstOrDefaultAsync(o => o.Id == id, cancellationToken)
+        await db.Orders.AsNoTracking().Include(o => o.Lines.OrderBy(l => l.LineNumber)).FirstOrDefaultAsync(o => o.Id == id, cancellationToken)
         ?? throw NotFound(id);
 
     public async Task<Order> PayAsync(Guid id, CancellationToken cancellationToken)
@@ -175,7 +176,7 @@ public sealed partial class OrderService(
     }
 
     private async Task<Order> LoadForUpdateAsync(Guid id, CancellationToken cancellationToken) =>
-        await db.Orders.Include(o => o.Lines.OrderBy(l => l.Id)).FirstOrDefaultAsync(o => o.Id == id, cancellationToken)
+        await db.Orders.Include(o => o.Lines.OrderBy(l => l.LineNumber)).FirstOrDefaultAsync(o => o.Id == id, cancellationToken)
         ?? throw NotFound(id);
 
     private static void EnsureAwaitingPayment(Order order, string action)

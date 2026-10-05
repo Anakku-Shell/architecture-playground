@@ -52,6 +52,24 @@ public abstract class OrderContractTests(IShopApi api) : ContractTests(api)
     }
 
     [Fact]
+    public async Task OrderLines_KeepTheRequestOrder()
+    {
+        // Twelve lines: enough that an implementation returning lines in storage order (not request order)
+        // fails almost always, as the database gives no order without an ORDER BY.
+        var products = new List<ProductResponse>();
+        for (var i = 0; i < 12; i++)
+        {
+            products.Add(await Shop.CreateProduct(name: $"Line {i:D2}"));
+        }
+
+        var placed = await Shop.PlaceOrder([.. products.Select(p => (p.Id, 1))]);
+
+        var expected = products.Select(p => p.Id).ToList();
+        Assert.Equal(expected, placed.Lines.Select(l => l.ProductId));
+        Assert.Equal(expected, (await Shop.WaitForSettled(placed.Id)).Lines.Select(l => l.ProductId));
+    }
+
+    [Fact]
     public async Task PlaceOrder_WithoutEnoughStock_EndsRejected_AndStockUnchanged()
     {
         var product = await Shop.CreateProduct(stock: 1);

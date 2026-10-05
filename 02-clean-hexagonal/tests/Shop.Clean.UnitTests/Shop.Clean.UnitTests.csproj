@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <!-- Domain and Application only: no database, no web. That these tests need nothing else is the point. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Shop.Clean.Application\Shop.Clean.Application.csproj" />
+  </ItemGroup>
+
+</Project>

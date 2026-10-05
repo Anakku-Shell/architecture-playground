@@ -1,0 +1,7 @@
+<!--
+  Domain: the business model (entities, value objects, domain services, domain exceptions).
+  It references nothing, no project and no package: the centre of the architecture. Guide: §5.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+</Project>

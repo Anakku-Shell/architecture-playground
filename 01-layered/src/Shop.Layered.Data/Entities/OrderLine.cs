@@ -10,6 +10,12 @@ public sealed class OrderLine
 
     public Guid OrderId { get; set; }
 
+    /// <summary>
+    /// 1, 2, 3… in the order the customer sent the lines. A table has no order of its own and the ids are
+    /// not sequential within a millisecond, so reading lines back in request order needs this column.
+    /// </summary>
+    public int LineNumber { get; set; }
+
     public Guid ProductId { get; set; }
 
     public string ProductName { get; set; } = "";

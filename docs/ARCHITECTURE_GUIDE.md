@@ -45,7 +45,16 @@ This guide goes with the code. It explains software architecture from zero. Ever
    7. [What changed from the previous version](#47-what-changed-from-the-previous-version)
    8. [Trade-offs](#48-trade-offs)
    9. [Interview questions](#49-interview-questions)
-5. Clean / Hexagonal — *coming in phase 02*
+5. [Clean / Hexagonal](#5-clean--hexagonal)
+   1. [The idea](#51-the-idea)
+   2. [Layers, ports and adapters](#52-layers-ports-and-adapters)
+   3. [Using it](#53-using-it)
+   4. [Dependency inversion, made visible](#54-dependency-inversion-made-visible)
+   5. [Journey of a request](#55-journey-of-a-request)
+   6. [Rules](#56-rules)
+   7. [What changed from version 01](#57-what-changed-from-version-01)
+   8. [Trade-offs](#58-trade-offs)
+   9. [Interview questions](#59-interview-questions)
 6. Vertical Slice — *coming in phase 03*
 7. Modular monolith — *coming in phase 04*
 8. Microservices — *coming in phase 05*
@@ -658,6 +667,7 @@ erDiagram
     order_lines {
         uuid Id PK
         uuid OrderId FK
+        integer LineNumber "1, 2, 3… request order"
         uuid ProductId "no FK: a snapshot"
         varchar200 ProductName "copied at placement"
         numeric18_2 UnitPrice "copied at placement"
@@ -679,6 +689,7 @@ erDiagram
 - The column names are the C# property names (`"Name"`, `"PlacedAt"`), so in SQL they need double quotes. The table names come from `ToTable("products")`.
 - Status values are stored as **text**, not numbers (`HasConversion<string>()`). A row is readable in a SQL prompt, and reordering the enum cannot silently change the data's meaning.
 - `xmin` is not a real column. PostgreSQL keeps it on every row, and EF Core reads it as the order's row version (§4.5).
+- `order_lines.LineNumber` keeps the lines in the order the customer sent them. A table has no order of its own, and ids created in the same millisecond are not sequential. It arrived in a second migration, `AddOrderLineNumber`, the normal way a schema evolves: a new migration, never an edited old one.
 - **Foreign keys are deliberately few.** Only `order_lines → orders` has one, because a line cannot exist without its order. An order line's `ProductId` is a historical reference: the name and price were copied, so the line stays meaningful even if the product is later changed. `payments.OrderId` has a unique index but no foreign key. Both are a first hint of the boundaries between Catalog, Ordering and Payments that versions 04 and 05 turn into separate schemas and databases, where foreign keys across them are impossible.
 
 **Where to read the schema yourself.** The **migrations are the source of truth**: [`Migrations/`](../01-layered/src/Shop.Layered.Data/Migrations) in the Data project. Three ways to see it:
@@ -825,7 +836,7 @@ The second limit is the direction itself. Every rule above is satisfied, and sti
 
 ### 4.7 What changed from the previous version
 
-Nothing: this is the baseline. Every later version is built from a copy of the previous one and refactored, so the differences are diffs you can read. What 01 fixes for the rest is the external behaviour (it passes the 44 contract tests) and the schema of the shop.
+Nothing: this is the baseline. Every later version is built from a copy of the previous one and refactored, so the differences are diffs you can read. What 01 fixes for the rest is the external behaviour (it passes every contract test) and the schema of the shop.
 
 ### 4.8 Trade-offs
 
@@ -863,6 +874,350 @@ Nothing: this is the baseline. Every later version is built from a copy of the p
    Let the database decide atomically. Use a conditional `UPDATE … WHERE stock >= @qty` and check the affected row count, or optimistic concurrency with a version column and a retry. Never read-check-write in application code without one of them. For several rows, lock them in a consistent order to avoid deadlocks.
 6. **When would you still choose layered today?**
    For CRUD-style apps, small teams, and short-lived or internal systems, where its familiarity and low ceremony beat the cost of the coupling. Plan the exit: keep the rules in services, keep entities out of the API, and the move to Clean Architecture stays a refactoring, not a rewrite.
+
+---
+
+## 5. Clean / Hexagonal
+
+Code: [`02-clean-hexagonal/`](../02-clean-hexagonal/README.md). Decisions: [ADR 0001](../02-clean-hexagonal/docs/adr/0001-clean-architecture.md), [ADR 0002](../02-clean-hexagonal/docs/adr/0002-rich-domain-model.md), [ADR 0003](../02-clean-hexagonal/docs/adr/0003-ports-defined-by-application.md).
+
+### 5.1 The idea
+
+Version 01 stacked the layers on top of the database: the rules depended on the data layer. This version **turns that dependency around**. The business rules sit in the centre and depend on nothing. Everything technical (HTTP, EF Core, PostgreSQL, the payment provider) sits around them and depends on them.
+
+The centre states what it needs from the outside world as **interfaces it owns**: "give me the products with these ids", "charge this amount". Those interfaces are the **ports**. The outer code implements them (the database **adapter**) or calls into the centre (the HTTP adapter). Section 3.4 introduced the vocabulary; this chapter shows it in code.
+
+**Analogy.** A laptop and its USB ports. The laptop defines the port: shape, pins, protocol. A mouse, a keyboard or a disk is built *to fit the laptop's port*, not the other way round. You can swap the mouse without opening the laptop. You can even test the laptop with a fake device plugged in. In 01 the laptop was soldered to one specific mouse.
+
+Two more ideas arrive together with the inversion, because the centre now has room for them:
+
+- a **rich domain model**: `Order` and `Product` are no longer bags of public setters. They have methods (`order.Cancel()`, `product.Reserve(quantity)`) that refuse invalid moves. **Value objects** (`Money`, `Sku`, `Quantity`, `ProductName`) cannot even be created invalid;
+- **one class per use case** (`PlaceOrder`, `PayOrder`…) instead of one big service per area.
+
+In Spring the same shape is usually a `domain` module with plain Java classes, an `application` module with use cases and `port` interfaces, and `adapter` packages with `@RestController`s and JPA repositories that implement those ports.
+
+### 5.2 Layers, ports and adapters
+
+**Project references** (who compiles against whom):
+
+```mermaid
+flowchart TD
+    Api["Shop.Clean.Api<br/>driving adapter (HTTP) + composition root"]
+    Infrastructure["Shop.Clean.Infrastructure<br/>driven adapters: EF Core, payment gateway"]
+    Application["Shop.Clean.Application<br/>use cases + ports (interfaces)"]
+    Domain["Shop.Clean.Domain<br/>aggregates, value objects, domain service"]
+    Api --> Application
+    Api -->|"only Program.cs, to register adapters"| Infrastructure
+    Infrastructure --> Application
+    Application --> Domain
+```
+
+Compare with 01. There, `Business → Data`: the rules pointed at the database. Here, `Infrastructure → Application`: the database code points at the rules. Every arrow ends, directly or not, at `Domain`, and `Domain` has no arrow at all. That is **the dependency rule** (§3.6).
+
+**The same code drawn as a hexagon** (who calls whom, and who implements what):
+
+```mermaid
+flowchart LR
+    subgraph driving["Driving side (calls the application)"]
+        HTTP["Api endpoints"]
+        UT["Unit tests"]
+    end
+    subgraph core["Application core"]
+        UC["Use cases<br/>PlaceOrder, PayOrder…"]
+        P[["Ports<br/>IProductRepository, IOrderRepository,<br/>IPaymentRepository, IPaymentGateway, IUnitOfWork"]]
+        D["Domain<br/>Order, Product, Money, OrderFulfillment…"]
+    end
+    subgraph driven["Driven side (called by the application)"]
+        EF["EF Core repositories + EfUnitOfWork"]
+        FG["FakePaymentGateway"]
+        FK["In-memory fakes (tests)"]
+    end
+    HTTP --> UC
+    UT --> UC
+    UC --> D
+    UC --> P
+    EF -.->|implements| P
+    FG -.->|implements| P
+    FK -.->|implements| P
+    EF --> PG[("PostgreSQL")]
+```
+
+- **Driving (primary) adapters** start the conversation: the HTTP endpoints, and also the unit tests, which drive the use cases directly.
+- **Driven (secondary) adapters** are started by the application: the EF Core repositories, the payment gateway, and in the tests the in-memory fakes.
+- In this repo the use-case classes are themselves the driving ports. Many codebases add an interface per use case (`IPlaceOrder`, an "input port"). With one adapter calling each use case, that would be an interface with a single implementation and a single caller, so we skip it (YAGNI, "You Aren't Gonna Need It").
+
+| Layer / project | Responsibility | May know | Must NOT know | Example file |
+|---|---|---|---|---|
+| **Domain** | The business model and its rules: aggregates, value objects, the domain service, domain exceptions | Only the .NET base library | Everything else: Application, EF Core, HTTP, logging | [`Ordering/Order.cs`](../02-clean-hexagonal/src/Shop.Clean.Domain/Ordering/Order.cs) |
+| **Application** | One use case per operation: validate input, load through ports, let the domain decide, save. Declares the ports | Domain; logging and DI *abstractions* | EF Core, Npgsql, ASP.NET Core, any adapter | [`UseCases/Ordering/PlaceOrder.cs`](../02-clean-hexagonal/src/Shop.Clean.Application/UseCases/Ordering/PlaceOrder.cs), [`Ports/Ports.cs`](../02-clean-hexagonal/src/Shop.Clean.Application/Ports/Ports.cs) |
+| **Infrastructure** | Driven adapters: implement the ports with EF Core and PostgreSQL, and the payment gateway. All mapping between objects and tables | Application (ports), Domain, EF Core, Npgsql | The Api, HTTP | [`Persistence/Repositories.cs`](../02-clean-hexagonal/src/Shop.Clean.Infrastructure/Persistence/Repositories.cs), [`Configurations.cs`](../02-clean-hexagonal/src/Shop.Clean.Infrastructure/Persistence/Configurations/Configurations.cs) |
+| **Api** | Driving adapter: HTTP to use case and back, errors to ProblemDetails. `Program.cs` is the **composition root** | Application, Domain (to map responses), ASP.NET Core; Infrastructure *only in `Program.cs`* | EF Core, SQL, the adapters' classes | [`Endpoints/Endpoints.cs`](../02-clean-hexagonal/src/Shop.Clean.Api/Endpoints/Endpoints.cs) |
+
+**Clean, Hexagonal and Onion, side by side.** The three styles of §3.4 describe this same structure with different words:
+
+| In this repo | Clean Architecture (Martin) | Hexagonal (Cockburn) | Onion (Palermo) |
+|---|---|---|---|
+| `Domain` | Entities | The domain inside the application | Domain model (the core) |
+| `Application/UseCases` | Use cases (interactors) | The application; its API is the driving ports | Application services |
+| `Application/Ports` | Gateway interfaces at the use-case boundary | Driven ports | Repository and service interfaces, in the core |
+| `Infrastructure` | Interface adapters (gateways) + frameworks and drivers | Driven (secondary) adapters | Infrastructure (outer ring) |
+| `Api` | Interface adapters (controllers, presenters) + web framework | Driving (primary) adapters | User interface (outer ring) |
+| `Program.cs` | The "main" component | The configurator that plugs adapters in | Dependency resolution |
+
+**Data shapes at each boundary** while placing an order:
+
+| Boundary | Type | Defined in | Why this type |
+|---|---|---|---|
+| Client → Api | JSON → `PlaceOrderRequest` | Api ([`Models/Models.cs`](../02-clean-hexagonal/src/Shop.Clean.Api/Models/Models.cs)) | The HTTP shape, owned by the adapter |
+| Api → Application | `PlaceOrderCommand` | Application ([`PlaceOrder.cs`](../02-clean-hexagonal/src/Shop.Clean.Application/UseCases/Ordering/PlaceOrder.cs)) | The use case's input. It knows nothing about JSON or HTTP, so a message consumer or a CLI could send the same command |
+| Application ↔ Domain | `Product`, `Order` aggregates; `Money`, `Quantity`… | Domain | The business model. It holds the rules |
+| Application ↔ Infrastructure (through the ports) | Aggregates in, aggregates out | Domain (types), Application (interfaces) | The port speaks the application's language, never rows or `DbSet`s |
+| Infrastructure ↔ database | Columns. EF Core maps them to the aggregates with **value converters** and a **shadow property** | Infrastructure | Storage details stay on the outside |
+| Application → Api | `Order` aggregate | Domain | Read-only use: the Api only reads its properties |
+| Api → Client | `OrderResponse` → JSON | Api | Mapped from the aggregate (`Money` → `decimal`, `Sku` → `string`) |
+
+In 01, one class was the row, the business object and almost the JSON. Here each boundary has its own type, and the mapping between them is explicit code, in the adapters.
+
+**The database schema.** Database `shop_clean`. It is **the same schema as version 01**: same four tables, same columns, same keys (§4.2, "The database schema"):
+
+```mermaid
+erDiagram
+    products {
+        uuid Id PK
+        varchar200 Name "ProductName value object"
+        varchar50 Sku UK "Sku value object, upper-case"
+        numeric18_2 Price "Money value object"
+        integer Stock
+        xid xmin "row version (shadow property)"
+    }
+    orders {
+        uuid Id PK
+        uuid CustomerId
+        varchar30 Status
+        varchar30 CancellationReason "nullable"
+        numeric18_2 Total "Money"
+        timestamptz PlacedAt
+        xid xmin "row version (shadow property)"
+    }
+    order_lines {
+        uuid Id PK "shadow key, unknown to the domain"
+        uuid OrderId FK "owned by its order"
+        integer LineNumber "1, 2, 3… request order"
+        uuid ProductId "no FK: a snapshot"
+        varchar200 ProductName
+        numeric18_2 UnitPrice
+        integer Quantity "Quantity value object"
+        numeric18_2 LineTotal
+    }
+    payments {
+        uuid Id PK
+        uuid OrderId UK
+        numeric18_2 Amount
+        varchar30 Status
+        timestamptz ProcessedAt
+    }
+    orders ||--|{ order_lines : "owns (FK, cascade delete)"
+    orders ||--o| payments : "paid by (no FK)"
+    products ||--o{ order_lines : "snapshot of (no FK)"
+```
+
+What changed is only *how the code reaches it*. Value objects are stored as plain columns through **value converters** (`Money` ↔ `numeric`). Writing goes through the domain's rules, because a `Money` can only be created valid. **Reading back does not re-run them**: the converters call `Money.Rehydrate`, `Quantity.Rehydrate`… instead of `Of`. A row was valid when it was written. If a rule tightens later (at most 500 units per line), re-checking every old row on load would make past orders unreadable. Turning stored data back into objects is called **rehydration**, and the architecture test `OnlyPersistenceAdapters_RehydrateValueObjects` keeps that shortcut inside the adapters. The row version is a **shadow property**: EF Core tracks `xmin` for `products` and `orders`, but the domain classes have no `Version` property. Order lines are **owned** by their order: EF Core loads and saves them only with it, which matches the aggregate. `LineNumber` (added to both versions by a second migration, `AddOrderLineNumber`) keeps the lines in the order the customer sent them. A table has no order of its own, and ids generated in the same millisecond are not sequential, so without it a `GET` could list the lines shuffled. The contract test `OrderLines_KeepTheRequestOrder` now checks this for every version. One lesson hides in the identical schema: **the architecture is in the code, not in the database.** To inspect it, run `dotnet ef migrations script --project 02-clean-hexagonal/src/Shop.Clean.Infrastructure`, or open `docker compose exec postgres psql -U shop -d shop_clean`.
+
+### 5.3 Using it
+
+```bash
+docker compose up -d
+dotnet run --project 02-clean-hexagonal/src/Shop.Clean.Api      # http://localhost:5102
+dotnet test 02-clean-hexagonal/tests/Shop.Clean.UnitTests        # 69 tests, no database, about one second
+```
+
+In [`http/shop.http`](../http/shop.http) set `@baseUrl = {{clean}}` and send the same requests as for 01. The answers are identical: the contract tests guarantee it. The console log lines now come from the use-case classes (`Shop.Clean.Application.UseCases.Ordering.PlaceOrder`).
+
+**Try this**
+
+- **Run the unit tests** and look at [`UseCaseTests.cs`](../02-clean-hexagonal/tests/Shop.Clean.UnitTests/Application/UseCaseTests.cs). "Place an order without stock ends `Rejected`" and "a concurrency conflict is retried" run in milliseconds against the in-memory fakes in [`Fakes.cs`](../02-clean-hexagonal/tests/Shop.Clean.UnitTests/Application/Fakes.cs). In 01 the same checks needed PostgreSQL.
+- **Try to break the order lifecycle.** Write `order.Status = OrderStatus.Paid;` in a use case. It does not compile: the setter is private. Then make it public in `Order.cs` and run the architecture tests: `DomainModel_HasNoPublicSetters` fails.
+- **Swap an adapter.** Write a second `IPaymentGateway` (say, one that declines everything above 50) and register it in `InfrastructureServiceCollectionExtensions` instead of `FakePaymentGateway`. No use case or domain file changes.
+- **Add a package to Domain** (any NuGet package, used in one class). `Domain_DependsOnNothing` fails and names it.
+
+### 5.4 Dependency inversion, made visible
+
+At runtime, `PlaceOrder` calls `ProductRepository`, which calls PostgreSQL: the **call** goes from the centre outwards. In the source code, `ProductRepository` (Infrastructure) implements `IProductRepository` (Application): the **dependency** goes from the outside inwards. The two arrows point in **opposite directions** across every port. That opposite pointing is the whole trick of this chapter:
+
+```mermaid
+flowchart LR
+    subgraph Application
+        UC[PlaceOrder] -->|calls| IPR[["IProductRepository"]]
+    end
+    subgraph Infrastructure
+        PR[ProductRepository]
+    end
+    PR -.->|implements = depends on| IPR
+    UC -. "runtime call reaches" .-> PR
+```
+
+Version 01 had `OrderService → ShopDbContext`: call and dependency both pointed down, at the database. To change the database you edited the rules' layer. Here, changing the database means writing new adapters. The rules do not even get recompiled.
+
+The interface lives **with its consumer, not with its implementation**. That is what makes it an inversion and not just "use interfaces everywhere". An `IProductRepository` placed in the Infrastructure project would keep the old direction, only with more files.
+
+### 5.5 Journey of a request
+
+`POST /api/orders` again, one line, enough stock:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    box Api (driving adapter)
+        participant E as OrderEndpoints
+    end
+    box Application
+        participant UC as PlaceOrder
+        participant P as Ports (interfaces)
+    end
+    box Domain
+        participant F as OrderFulfillment
+        participant AG as Product / Order
+    end
+    box Infrastructure (driven adapters)
+        participant R as ProductRepository / OrderRepository
+        participant U as EfUnitOfWork
+    end
+    participant PG as PostgreSQL
+    C->>E: POST /api/orders
+    E->>UC: ExecuteAsync(PlaceOrderCommand)
+    UC->>UC: Validate (field names, Quantity.Of)
+    UC->>P: IProductRepository.GetManyAsync(ids)
+    P->>R: (implemented by) ProductRepository
+    R->>PG: SELECT … FROM products WHERE "Id" = ANY(…)
+    R-->>UC: Product aggregates
+    UC->>F: Place(orderId, customerId, lines, now)
+    F->>AG: CanReserve each line, Order.Place, Reserve each line
+    F-->>UC: Order (AwaitingPayment)
+    UC->>P: IOrderRepository.Add(order), IUnitOfWork.SaveChangesAsync()
+    P->>U: (implemented by) EfUnitOfWork
+    U->>PG: BEGIN, INSERT orders, UPDATE products … WHERE xmin = …, INSERT order_lines, COMMIT
+    U-->>UC: saved (or ConcurrencyConflictException → retry)
+    UC-->>E: Order aggregate
+    E-->>C: 201 Created + OrderResponse
+```
+
+**Reception (Api, the driving adapter)**
+
+1. The framework part is the same as in 01 (§4.4). [`OrderEndpoints`](../02-clean-hexagonal/src/Shop.Clean.Api/Endpoints/Endpoints.cs) turns the `PlaceOrderRequest` into a `PlaceOrderCommand` and calls `PlaceOrder.ExecuteAsync`.
+   *Boundary Api → Application: call inwards, dependency inwards (Api references Application). Same direction.*
+
+**Processing (Application orchestrates, Domain decides, Infrastructure fetches and stores)**
+
+2. `PlaceOrder.Validate` ([`PlaceOrder.cs`](../02-clean-hexagonal/src/Shop.Clean.Application/UseCases/Ordering/PlaceOrder.cs)) checks that the request is **well formed**: customer present, lines present, each quantity a valid `Quantity` (the domain's rule, applied through `ValidationErrors.Capture` so the error is reported under `lines[0].quantity`), no product twice. This is **input validation**. The domain checks the same **invariants** again when it builds the `Order`, but only the use case knows the JSON field names to report.
+3. `ConcurrencyRetry.ExecuteAsync` starts the first attempt (more in step 7).
+4. The use case asks the **port** `IProductRepository.GetManyAsync` for the products. An unknown id is a validation error on that line.
+   *Boundary Application → Infrastructure: the call goes **outwards** (use case → repository → database), the dependency goes **inwards** (Infrastructure implements Application's interface). Opposite directions: dependency inversion (§5.4).*
+5. [`ProductRepository`](../02-clean-hexagonal/src/Shop.Clean.Infrastructure/Persistence/Repositories.cs), the driven adapter, runs the EF Core query. EF Core builds real `Product` aggregates through their private constructor and value converters. What crosses back through the port is domain objects, never rows.
+6. The use case hands everything to the **domain service** [`OrderFulfillment.Place`](../02-clean-hexagonal/src/Shop.Clean.Domain/Ordering/OrderFulfillment.cs). **This is where the business rules run**, in memory: can every line be reserved? If yes, `Order.Place` (snapshot of names and prices, totals in `Money`) and `product.Reserve` for each line. If not, `Order.Reject`, and no stock moves.
+   *Boundary Application → Domain: call inwards, dependency inwards. Same direction.*
+7. `orders.Add(order)` and `unitOfWork.SaveChangesAsync()`. [`EfUnitOfWork`](../02-clean-hexagonal/src/Shop.Clean.Infrastructure/Persistence/Repositories.cs) calls EF Core's `SaveChanges`, and **the transaction starts and commits here**, in one call: insert the order and its lines, update each changed product with `WHERE "Id" = … AND xmin = <value read in step 5>`.
+   **Concurrency is handled differently from 01.** In 01 the database applied "stock ≥ quantity" itself, atomically, in a conditional `UPDATE`. Here that rule lives in `Product.Reserve`, in memory, where the database cannot apply it. So the database can only *detect* that someone changed the row in the meantime: the `xmin` check matches zero rows, and EF Core throws. `EfUnitOfWork` translates that into the port's `ConcurrencyConflictException`. [`ConcurrencyRetry`](../02-clean-hexagonal/src/Shop.Clean.Application/Common/ConcurrencyRetry.cs) then discards everything tracked and runs steps 4–7 again with fresh data, up to 15 times. A request loses only when another request committed a change to the same product between its read and its save. With ten customers racing for two units, only two reservations ever commit, so no request loses more than a couple of times; with plenty of stock and N writers, a request could lose up to N − 1 times. The losers of the stock see `Stock = 0` on reload and get `Rejected`, which writes no product row. This is **optimistic concurrency with retry** (§3.10). It is the price of keeping the rule in the domain: correct, and the losers pay with extra round trips.
+
+**Response (Api)**
+
+8. The use case returns the `Order` aggregate. The endpoint maps it with `OrderResponse.From` (`Money` → `decimal`, `ProductName` → `string`) and returns `201 Created`.
+
+**The error path**
+
+- **Invalid input → `400`.** Detected in step 2, before any database call. `ValidationErrors` collects *every* invalid field into one `ValidationException`, and the Api's [`ProblemDetailsExceptionHandler`](../02-clean-hexagonal/src/Shop.Clean.Api/ErrorHandling/ProblemDetailsExceptionHandler.cs) writes it as a validation problem with `errors`. Product creation reports name, SKU and price errors together. A `DomainValidationException` that escaped a use case would also become a `400`, as a safety net.
+- **Broken business rule → `409`.** Paying a paid order: `PayOrder` loads the order and calls `order.EnsureAwaitingPayment`, which throws the domain's `BusinessRuleViolationException`. The domain decides that it is forbidden; the Api decides that this means `409`.
+- **Duplicate SKU → `409`.** `CreateProduct` checks first through the port. If two requests race past that check, the unique index fires, `EfUnitOfWork` translates the PostgreSQL error into the port's `DuplicateKeyException`, and the use case turns it into a `ConflictException`. Compare with 01, where the Business layer caught `PostgresException` itself.
+- **Endless conflicts → `409`.** After 15 lost rounds, `ConcurrencyRetry` gives up with a `ConflictException` instead of retrying forever.
+- **Paying, and the double charge.** `PayOrder` checks the status *before* charging, charges **once**, outside the retry loop, and then retries only the state change. The order id travels through the port as the provider's **idempotency key** (§4.5). If another request paid the order meanwhile, the retry reloads it, `RecordPayment` refuses, and the answer is `409`; a real provider, seeing the same idempotency key, charged only once. **One gap remains:** a *cancel* that commits between the charge and the save. The money moved, the order is now `Cancelled`, and no `Payment` row is stored. The idempotency key cannot help, because there was only one charge. This version makes the case visible (a warning log, "charged … refund required") but does not cure it. The cures are a refund, or recording a `PaymentPending` state *before* charging so a cancel is refused meanwhile. Version 05 does the latter. A synchronous call to an external system inside a business operation always leaves such a window.
+
+**Where would I change…**
+
+| Change | Files touched | Layers |
+|---|---|---|
+| Add a field to products (`Description`) | `Product` (+ a value object if it has rules), `CreateProductCommand` + `CreateProduct`, `ProductConfiguration` + a migration, `Models.cs` (request and response) | **all four** (more files than 01) |
+| Rename a domain property (`Name` → `Title`) | Domain, the use cases that read it, `Configurations.cs`, `Models.cs`. The JSON field can stay `name`, because the Api maps explicitly | all four, but the API contract is untouched |
+| Rename only the column | `HasColumnName` in `Configurations.cs` + a migration | Infrastructure |
+| Change a rule (max 500 units per line) | `Quantity.Max`. Old orders with bigger lines still load (rehydration skips the rule); what they *mean* now is a business decision | **Domain only** |
+| Switch PostgreSQL → SQL Server | Infrastructure: provider, migrations, `xmin` → `rowversion`, unique-violation translation in `EfUnitOfWork` | **Infrastructure only** (01: Data + Business) |
+| Use a real payment provider | A new `IPaymentGateway` adapter + one line in `AddInfrastructure` | Infrastructure only |
+| Add an endpoint (orders of a customer) | A new use case, a port method, its EF implementation, an endpoint | Api, Application, Infrastructure |
+
+The pattern is the mirror image of 01. **Technology changes stay at the edge, and rule changes stay in the centre.** Adding data still crosses every layer, now with more mapping.
+
+**Unit tests without a database.** [`Domain/`](../02-clean-hexagonal/tests/Shop.Clean.UnitTests/Domain) tests the aggregates, value objects and the domain service as plain objects: every order transition, valid and invalid. [`Application/`](../02-clean-hexagonal/tests/Shop.Clean.UnitTests/Application) runs the use cases against hand-written in-memory adapters. That is 69 tests in about a second, where 01 had 12 that could run without PostgreSQL. The contract tests still run against a real database. The unit tests prove the rules; the contract tests prove the adapters and the wiring.
+
+### 5.6 Rules
+
+The architecture tests are in [`CleanArchitectureRulesTests.cs`](../02-clean-hexagonal/tests/Shop.Clean.ArchitectureTests/CleanArchitectureRulesTests.cs):
+
+| Test | Rule | Why it exists | Compiler already prevents it? |
+|---|---|---|---|
+| `Domain_DependsOnNothing` | Domain references only the .NET base library and no other layer | The most valuable code is immune to changes in everything else | No: anyone can add a package to Domain |
+| `Application_DependsOnlyOnDomain` | No Application type uses Infrastructure or Api (packages: next rule) | Use cases say *what*, adapters say *how* | Yes (it would be a circular reference); kept as documentation |
+| `Application_DoesNotUseEfCoreOrAspNetCore` | No Application type uses EF Core, Npgsql or ASP.NET Core | Keeps the core testable with fakes and the technologies swappable | No: a package reference is enough |
+| `Infrastructure_DoesNotReferenceApi` | No Infrastructure type uses the Api | Adapters are independent of each other | Yes (circular); kept as documentation |
+| `Ports_AreInterfacesInApplication` | The Ports namespace holds interfaces (and their contract's exceptions); Domain and Infrastructure declare no interfaces | The inner layer owns the abstractions: that is the inversion | No |
+| `Api_UsesInfrastructureOnlyInTheCompositionRoot` | Only `Program` touches Infrastructure; no endpoint uses EF Core | An endpoint using an adapter would bypass the use cases | Partly: the adapters are `internal`, the registration class is public |
+| `OnlyPersistenceAdapters_RehydrateValueObjects` | Only Infrastructure calls `Rehydrate` | Skipping validation is safe only for data read back from storage | No |
+| `DomainModel_HasNoPublicSetters` | No domain property has a public setter | The rules hold only if they cannot be bypassed | No |
+
+Two tools work together here. **Project references** stop the wrong *direction* at compile time. **`internal`** hides the adapters: `ShopDbContext` and the repositories cannot be named outside Infrastructure. The **tests** catch what neither can see: packages, namespaces, setters, where interfaces live.
+
+### 5.7 What changed from version 01
+
+| | 01 Layered | 02 Clean / Hexagonal |
+|---|---|---|
+| Projects | Api → Business → Data | Api → Application → Domain; Infrastructure → Application |
+| Direction | Rules depend on the database layer | The database layer depends on the rules |
+| Business model | EF entities, public setters, no behaviour | Aggregates with methods, private setters, value objects |
+| Where the rules are | `OrderService`, `ProductService` | `Order`, `Product`, `Money`…, `OrderFulfillment` |
+| Operations | One service per area | One use-case class per operation |
+| Database access | Business uses `ShopDbContext` directly | Through ports; `ShopDbContext` is `internal` to Infrastructure |
+| PostgreSQL errors | Caught in Business | Translated in the adapter into the port's exceptions |
+| Stock concurrency | Conditional `UPDATE` (the database applies the rule) | Optimistic `xmin` check + retry (the domain applies the rule) |
+| Payment gateway | Concrete class used by the service | `IPaymentGateway` port, adapter in Infrastructure |
+| Unit tests | 12 (pure helpers only) | 69 (domain + use cases with fakes) |
+| C# lines in `src/` (without migrations) | about 990 in 23 files | about 1,560 in 29 files |
+| Schema | 4 tables | **the same** 4 tables |
+
+The code grew by more than half. That is the honest cost, paid in mapping (value converters, response mapping, commands), in ports and in small classes.
+
+### 5.8 Trade-offs
+
+**Benefits**
+
+- The rules are in one place, with a name, and cannot be bypassed: `order.Cancel()` is the only way to cancel.
+- Business logic is unit-testable in milliseconds, without a database or mocks.
+- Technologies are replaceable at the edge: database, payment provider, even the delivery mechanism (a message consumer could call the same use cases).
+- The structure tells you where things go. That helps humans and AI agents equally, and the architecture tests catch them when they get it wrong.
+
+**Costs**
+
+- More code and more types: commands, value objects, converters, response mapping. A field added to a product touches more files than in 01.
+- **The persistence compromise.** EF Core maps the domain classes directly, so they need a private parameterless constructor and private setters EF can fill. The domain is *almost* persistence-ignorant. The pure alternative is a separate persistence model (row classes in Infrastructure) mapped to and from the aggregates: a cleaner domain, twice the mapping. Most teams accept the compromise.
+- Optimistic concurrency needs retries, and the losers pay with extra round trips. 01's conditional `UPDATE` was simpler and cheaper under contention.
+- Placing an order changes several aggregates (an `Order` and several `Product`s) in one transaction. That breaks the DDD guideline of one aggregate per transaction (§3.7). It is fine in a monolith with one database. Versions 04 and 05 show what it costs when the aggregates move apart.
+- Indirection: a reader follows endpoint → use case → port → adapter to find a query.
+
+**When to use it.** Domains with real rules and states, long-lived systems, when several delivery mechanisms or infrastructures are likely, and when fast tests of business logic matter.
+
+**When NOT to use it.** Thin CRUD over a database, prototypes, small tools. There the ports and mappings add ceremony without protecting much. A common middle ground is to apply it to the one complex part of a system only, which is what version 04 does with its Ordering module.
+
+### 5.9 Interview questions
+
+1. **Hexagonal, Onion, Clean: what is the difference?**
+   Mostly vocabulary and drawing style. All three put the business rules in the centre and make every dependency point inwards, with the core owning the interfaces the outside implements. Hexagonal speaks of ports and driving/driven adapters, Onion of rings, Clean of entities, use cases and interface adapters.
+2. **What is dependency inversion, and where must the interface live?**
+   High-level code (use cases) depends on an abstraction it owns, and low-level code (the database adapter) implements it. The interface lives with the consumer, in the core. Put it next to the implementation and the dependency still points at the infrastructure.
+3. **What are driving and driven adapters?**
+   Driving (primary) adapters call into the application: controllers, message consumers, tests. Driven (secondary) adapters are called by it through ports: repositories, gateways, message publishers.
+4. **Anemic versus rich domain model?**
+   Anemic: data classes, with the rules in services (version 01). Rich: entities and value objects with methods that protect their invariants, with private setters, so invalid states cannot be represented. Rich pays off when there are real rules; for CRUD it is ceremony.
+5. **Where does validation go?**
+   In two places, for two purposes. Input validation (is the request well formed? which field is wrong?) belongs at the application boundary. Invariants (an amount has at most two decimals, a paid order cannot be cancelled) belong in the domain and are enforced always, whoever calls.
+6. **Should the domain reference EF Core or JPA?**
+   Ideally not: no attributes, no `DbContext`, no annotations. Mapping lives in infrastructure (fluent configuration, or `orm.xml` in Java). A private constructor for the ORM is the usual small compromise; a separate persistence model is the pure alternative.
 
 ---
 
@@ -915,6 +1270,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Domain**: the area of business the software serves. [§3.7]
 - **Domain event**: something meaningful that happened inside a bounded context, named in the past tense. [§3.9]
 - **Domain service**: a business operation that does not naturally belong to one entity. [§3.7]
+- **Driving / driven adapter**: in Hexagonal Architecture, a driving (primary) adapter calls into the application (HTTP endpoints, tests); a driven (secondary) adapter is called by it through a port (repositories, gateways). [§5.2]
 - **DTO**: Data Transfer Object, a plain type that only carries data across a boundary (a request or response record). [§4.2]
 - **EF Core / EF Core entity**: Entity Framework Core, the .NET object-relational mapper that maps classes to tables. An EF Core entity is a class mapped to a table; it is not the same idea as a DDD entity. [§4.2]
 - **Endpoint**: in ASP.NET Core, the code that handles one method and path (`POST /api/orders`). [§4.4]
@@ -931,7 +1287,10 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Idempotency key**: a unique value sent with a request (such as the order id with a charge) so the receiver can recognise a repeat and do the work only once. [§4.5]
 - **Idempotent**: doing it twice has the same effect as doing it once. [§3.9]
 - **Inbox**: a table of already-handled message ids, used to ignore duplicate deliveries. [§3.9]
+- **Input port**: an interface through which a driving adapter calls a use case (`IPlaceOrder`). Here the use-case class itself plays that role. [§5.2]
+- **Input validation**: checking that a request is well formed and reporting which field is wrong; done at the application boundary. Compare invariant. [§5.5]
 - **Integration event**: an event published to other bounded contexts, part of a context's public contract. [§3.9]
+- **Invariant**: a rule that must always hold for an object, whoever changes it (an amount has at most two decimals). Enforced by the domain itself, unlike input validation. [§5.5]
 - **Isolation level**: how much concurrent transactions see of each other. PostgreSQL defaults to READ COMMITTED: each statement sees the data committed before it started. [§4.5]
 - **Kestrel**: the web server built into ASP.NET Core. [§4.4]
 - **Lasagna code**: so many pass-through layers that each one adds code but no decision. [§4.8]
@@ -955,6 +1314,8 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Onion Architecture**: Jeffrey Palermo's style (2008): the domain model in the centre, with concentric rings around it. [§3.4]
 - **Optimistic concurrency**: detecting, at save time, that someone else changed the row since you read it, and retrying. [§3.10]
 - **Outbox (transactional)**: saving outgoing messages in the same transaction as the data and publishing them afterwards, so none is lost. [§3.9]
+- **Owned entity (EF Core)**: an entity stored and loaded only together with its owner, like order lines with their order. [§5.2]
+- **Persistence ignorance**: domain classes that know nothing about how they are stored (no ORM attributes, no database types). [§5.8]
 - **Port**: in Hexagonal Architecture, an interface defined by the application for something it needs or offers. [§3.4]
 - **PostgreSQL**: the open-source relational database used by every version. [§1.3]
 - **Presentation layer**: the top layer of a layered architecture; it talks to the outside world (HTTP, UI). [§4.1]
@@ -964,9 +1325,11 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Projection**: a query that selects exactly the data a response needs, instead of loading whole entities. [§3.8]
 - **Query**: a request that reads state and changes nothing (`GetOrder`). [§3.8]
 - **RabbitMQ**: the open-source message broker used by version 05. [§3.9]
+- **Rehydration**: turning stored data back into domain objects, without re-running today's validation rules on it. [§5.2]
 - **Relaxed / strict layering**: strict means a layer may use only the layer directly below it; relaxed means any layer below. [§4.6]
 - **Repository**: a collection-like interface to load and save aggregates. [§3.7]
 - **RFC**: Request for Comments, a numbered internet standard. [§3.11]
+- **Rich domain model**: entities and value objects with behaviour that protects their own rules; the opposite of an anemic model. [§5.1]
 - **Roslyn**: the C# compiler. [§1.1]
 - **Routing**: the framework step that picks the endpoint matching a request method and path. [§4.4]
 - **Row lock**: a lock the database takes on a row while a transaction updates it; other writers of that row wait until it commits. [§4.5]
@@ -977,6 +1340,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **SDK**: Software Development Kit; for .NET, the runtime + C# compiler + `dotnet` CLI + MSBuild. [§1.1]
 - **Serverless**: deploying individual functions that the cloud runs on demand. [§3.2]
 - **Service (layered architecture)**: a class in the business layer that groups the operations of one area (`OrderService`). [§4.2]
+- **Shadow property**: a property EF Core maps to a column although the class has no such property (the row version here). [§5.2]
 - **SKU**: Stock Keeping Unit, the shop's own unique product code. [§3.11]
 - **Snapshot (order line)**: a copy of a value taken at a moment in time, such as the product name and price when an order is placed. [§4.5]
 - **SOA**: Service-Oriented Architecture, large shared services often joined by an enterprise service bus; the ancestor of microservices. [§3.2]
@@ -984,6 +1348,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **SOLID**: five object-oriented design principles: Single responsibility, Open/closed, Liskov substitution, Interface segregation, Dependency inversion. [§3.6]
 - **Solution (`.slnx`)**: a file that groups the projects worked on together. [§2.1]
 - **Strong consistency**: every reader sees the latest committed data at once, as with one database transaction. [§3.10]
+- **Test double / fake**: an object that stands in for a real dependency in a test; a fake is a small working implementation (the in-memory repositories). [§5.5]
 - **Testcontainers**: a library that starts throwaway Docker containers for tests. [§1.3]
 - **Transaction**: a group of database changes that succeed or fail together. [§3.10]
 - **Transaction Script**: each operation is one procedure that reads, decides and writes, with no domain model. [§3.2]
@@ -992,9 +1357,12 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Ubiquitous language**: one precise vocabulary shared by business experts and code. [§3.7]
 - **Unique index (UK)**: an index that also forbids two rows with the same value (`products.Sku`). [§4.2]
 - **Unit of work**: an object that collects every change made during one business operation and writes them together (EF Core: the `DbContext` and `SaveChanges`). [§4.2]
+- **Use case (interactor)**: one application operation as one class (`PlaceOrder`): validate, load, let the domain decide, save. [§5.1]
+- **Value converter (EF Core)**: code that turns a property into a column value and back (`Money` to `numeric`). [§5.2]
 - **Value object**: an immutable domain object defined only by its values (`Money`). [§3.7]
 - **Vertical Slice architecture**: code organised by use case, one folder per feature, instead of by technical layer. [§3.2]
 - **Volume (Docker)**: storage that outlives a container, used here to keep the database data. [§1.3]
 - **WebApplicationFactory**: starts an ASP.NET Core app in memory for tests. [§2.7]
 - **xmin**: a PostgreSQL system column that changes on every update of a row; used as a row version for optimistic concurrency. [§4.5]
 - **xUnit**: the test framework used here (version 3). [§2.7]
+- **YAGNI**: "You Aren't Gonna Need It", do not build something until it is needed. [§5.2]

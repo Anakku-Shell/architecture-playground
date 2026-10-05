@@ -8,7 +8,7 @@ The explanations live in `docs/ARCHITECTURE_GUIDE.md`. **Keep it in sync with th
 
 - `01-layered/`, `02-clean-hexagonal/`, `03-vertical-slice/`, `04-modular-monolith/`, `05-microservices/`: one **standalone** solution each (`Shop.slnx`, `src/`, `tests/`, `README.md`, `docs/adr/`).
   - **Never reference code across version folders.** The only shared code is `contract-tests/`. Duplication between versions is intentional: each version must be readable on its own.
-  - Built so far: **01** (layered: `Shop.Layered.Api → .Business → .Data`; conditional `UPDATE` for stock, `xmin` row version on orders). The others are coming, in order.
+  - Built so far: **01** (layered: `Shop.Layered.Api → .Business → .Data`; conditional `UPDATE` for stock, `xmin` row version on orders) and **02** (clean/hexagonal: `Shop.Clean.Domain`, `.Application` with ports, `.Infrastructure` adapters, `.Api`; rich domain, optimistic `xmin` + retry). The others are coming, in order.
 - `contract-tests/Shop.ContractTests/`: the shared API contract suite (abstract xUnit classes). Each version's `Shop.<V>.ContractTests` project inherits it. See its README.
 - Root build files apply to every version: `global.json` (SDK), `Directory.Build.props` (compiler settings), `Directory.Packages.props` (all package versions), `.editorconfig`.
 - `compose.yaml` + `docker/postgres/init.sql`: PostgreSQL for 01–04 on `localhost:5433` (`shop`/`shop`, dev only), databases `shop_layered`, `shop_clean`, `shop_slice`, `shop_modular`.
