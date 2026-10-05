@@ -36,6 +36,8 @@ public sealed class ShopDbContext(DbContextOptions<ShopDbContext> options) : DbC
             order.Property(o => o.CancellationReason).HasConversion<string>().HasMaxLength(30);
             order.Property(o => o.Total).HasPrecision(18, 2);
             order.Property(o => o.Version).IsRowVersion();
+            // The only foreign key: a line cannot exist without its order. OrderLine.ProductId and
+            // Payment.OrderId have none on purpose; see the schema notes in Guide §4.2.
             order.HasMany(o => o.Lines).WithOne().HasForeignKey(l => l.OrderId);
         });
 

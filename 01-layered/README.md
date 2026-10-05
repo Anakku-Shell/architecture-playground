@@ -19,6 +19,14 @@ flowchart TD
 | [Business](src/Shop.Layered.Business) | Validation, rules, transactions (`OrderService`, `ProductService`, `PaymentService`) | HTTP, the Api |
 | [Data](src/Shop.Layered.Data) | Entities, `ShopDbContext`, migrations | Business, Api |
 
+## Database
+
+Database `shop_layered` with four tables: `products`, `orders`, `order_lines`, `payments`. They map one-to-one to the EF entities in [`src/Shop.Layered.Data/Entities`](src/Shop.Layered.Data/Entities). The diagram, column by column, and how to inspect it are in [guide §4.2](../docs/ARCHITECTURE_GUIDE.md#42-layers-and-their-responsibilities) ("The database schema"). The full SQL:
+
+```bash
+dotnet ef migrations script --project 01-layered/src/Shop.Layered.Data
+```
+
 ## Using it
 
 ```bash
