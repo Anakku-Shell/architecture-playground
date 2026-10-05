@@ -20,7 +20,8 @@ Set-Location (Join-Path $PSScriptRoot "..")
 # Each new version adds its entry here (04 has one per module, 05 one per service).
 $targets = @(
     @{ Name = "01-layered"; Project = "01-layered/src/Shop.Layered.Data"; Context = "" },
-    @{ Name = "02-clean-hexagonal"; Project = "02-clean-hexagonal/src/Shop.Clean.Infrastructure"; Context = "" }
+    @{ Name = "02-clean-hexagonal"; Project = "02-clean-hexagonal/src/Shop.Clean.Infrastructure"; Context = "" },
+    @{ Name = "03-vertical-slice"; Project = "03-vertical-slice/src/Shop.Slice.Api"; Context = "" }
 )
 
 $out = "artifacts/sql"

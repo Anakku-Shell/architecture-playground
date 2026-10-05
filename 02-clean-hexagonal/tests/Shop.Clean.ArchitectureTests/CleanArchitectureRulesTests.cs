@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text.RegularExpressions;
 using ArchUnitNET.Domain;
 using ArchUnitNET.Loader;
 using ArchUnitNET.xUnitV3;
@@ -72,10 +73,15 @@ public sealed class CleanArchitectureRulesTests
     [Fact]
     public void Application_DoesNotUseEfCoreOrAspNetCore()
     {
-        Types().That().Are(Application).Should()
-            .NotDependOnAnyTypesThat().ResideInNamespaceMatching(@"^(Microsoft\.EntityFrameworkCore|Microsoft\.AspNetCore|Npgsql)(\..+)?$")
-            .Because("persistence and HTTP are adapters outside the application core")
-            .Check(Architecture);
+        // Read from the IL (CompiledCode): the use cases do their work inside async lambdas passed to
+        // ConcurrencyRetry, which ArchUnitNET does not see into.
+        var violations =
+            from type in CompiledCode.Read(ApplicationAssembly)
+            from used in type.UsedTypes
+            where Regex.IsMatch(used, @"^(Microsoft\.EntityFrameworkCore|Microsoft\.AspNetCore|Npgsql)\.")
+            select $"{type.Type} uses {used}";
+
+        Assert.Empty(violations);
     }
 
     /// <summary>Why: adapters are independent of each other; the database adapter must work whatever drives the application.</summary>
@@ -109,9 +115,15 @@ public sealed class CleanArchitectureRulesTests
     [Fact]
     public void Api_UsesInfrastructureOnlyInTheCompositionRoot()
     {
-        Types().That().Are(Api).And().AreNot(typeof(Program)).Should().NotDependOnAny(Infrastructure)
-            .AndShould().NotDependOnAnyTypesThat().ResideInNamespaceMatching(@"^Microsoft\.EntityFrameworkCore(\..+)?$")
-            .Check(Architecture);
+        // From the IL: the endpoints are async lambdas, and only their bodies would reveal an adapter used inside.
+        var violations =
+            from type in CompiledCode.Read(ApiAssembly).Where(t => t.Type != typeof(Program).FullName)
+            from used in type.UsedTypes
+            where used.StartsWith("Shop.Clean.Infrastructure.", StringComparison.Ordinal)
+                || used.StartsWith("Microsoft.EntityFrameworkCore.", StringComparison.Ordinal)
+            select $"{type.Type} uses {used}";
+
+        Assert.Empty(violations);
     }
 
     /// <summary>
@@ -122,10 +134,14 @@ public sealed class CleanArchitectureRulesTests
     [Fact]
     public void OnlyPersistenceAdapters_RehydrateValueObjects()
     {
-        Types().That().Are(Application).Or().Are(Api).Or().Are(Domain).Should()
-            .NotCallAny(MethodMembers().That().HaveNameStartingWith("Rehydrate("))
-            .Because("only data read back from storage may skip today's validation rules")
-            .Check(Architecture);
+        var violations =
+            from assembly in new[] { DomainAssembly, ApplicationAssembly, ApiAssembly }
+            from type in CompiledCode.Read(assembly)
+            from call in type.CalledMethods
+            where call.StartsWith("Shop.Clean.Domain.", StringComparison.Ordinal) && call.EndsWith("::Rehydrate", StringComparison.Ordinal)
+            select $"{type.Type} calls {call}";
+
+        Assert.Empty(violations);
     }
 
     /// <summary>

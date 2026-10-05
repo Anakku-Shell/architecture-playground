@@ -53,6 +53,9 @@
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.15.0" />
     <PackageVersion Include="Testcontainers.RabbitMq" Version="4.15.0" />
     <PackageVersion Include="TngTech.ArchUnitNET.xUnitV3" Version="0.13.4" />
+    <!-- Reads compiled IL. The architecture tests use it directly for rules that must see inside async lambdas,
+         which ArchUnitNET does not attribute to their declaring type (guide §6.6). Same version ArchUnitNET uses. -->
+    <PackageVersion Include="Mono.Cecil" Version="0.11.6" />
     <PackageVersion Include="Aspire.Hosting.Testing" Version="13.6.0" />
   </ItemGroup>
 </Project>

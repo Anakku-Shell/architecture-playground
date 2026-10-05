@@ -21,6 +21,7 @@ cd "$(dirname "$0")/.."
 targets=(
   "01-layered|01-layered/src/Shop.Layered.Data|"
   "02-clean-hexagonal|02-clean-hexagonal/src/Shop.Clean.Infrastructure|"
+  "03-vertical-slice|03-vertical-slice/src/Shop.Slice.Api|"
 )
 
 only="${1:-}"

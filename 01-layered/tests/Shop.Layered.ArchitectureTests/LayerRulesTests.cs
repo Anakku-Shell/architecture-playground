@@ -52,13 +52,15 @@ public sealed class LayerRulesTests
     [Fact]
     public void Api_DoesNotUseTheDbContext()
     {
-        // NotDependOnAnyTypesThat() matches EF Core types even though EF Core's assemblies are not loaded
-        // into Architecture; NotDependOnAny(Types()...) would only search the three loaded assemblies.
-        Types().That().Are(Api).Should()
-            .NotDependOnAny(Types().That().Are(typeof(ShopDbContext)))
-            .AndShould().NotDependOnAnyTypesThat().ResideInNamespaceMatching(@"^Microsoft\.EntityFrameworkCore(\..+)?$")
-            .Because("only the Business layer reads and writes the database")
-            .Check(Architecture);
+        // Read from the compiled IL (CompiledCode), not with ArchUnitNET: the endpoints are async lambdas,
+        // and ArchUnitNET does not see what an async lambda's body uses. Guide: §6.6.
+        var violations =
+            from type in CompiledCode.Read(ApiAssembly)
+            from used in type.UsedTypes
+            where used == typeof(ShopDbContext).FullName || used.StartsWith("Microsoft.EntityFrameworkCore.", StringComparison.Ordinal)
+            select $"{type.Type} uses {used}";
+
+        Assert.Empty(violations);
     }
 
     /// <summary>

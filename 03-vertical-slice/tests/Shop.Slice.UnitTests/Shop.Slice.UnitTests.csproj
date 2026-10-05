@@ -6,12 +6,11 @@
 
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
-    <PackageReference Include="TngTech.ArchUnitNET.xUnitV3" />
-    <PackageReference Include="Mono.Cecil" />
   </ItemGroup>
 
+  <!-- Only the Domain folder is unit-tested; the slices are tested through HTTP (contract tests). -->
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Shop.Clean.Api\Shop.Clean.Api.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Slice.Api\Shop.Slice.Api.csproj" />
   </ItemGroup>
 
 </Project>

@@ -56,7 +56,16 @@ This guide goes with the code. It explains software architecture from zero. Ever
    7. [What changed from version 01](#57-what-changed-from-version-01)
    8. [Trade-offs](#58-trade-offs)
    9. [Interview questions](#59-interview-questions)
-6. Vertical Slice — *coming in phase 03*
+6. [Vertical Slice](#6-vertical-slice)
+   1. [The idea](#61-the-idea)
+   2. [Slices and their responsibilities](#62-slices-and-their-responsibilities)
+   3. [Using it](#63-using-it)
+   4. [Commands and queries: light CQRS](#64-commands-and-queries-light-cqrs)
+   5. [Journey of a request](#65-journey-of-a-request)
+   6. [Rules](#66-rules)
+   7. [What changed from version 02](#67-what-changed-from-version-02)
+   8. [Trade-offs](#68-trade-offs)
+   9. [Interview questions](#69-interview-questions)
 7. Modular monolith — *coming in phase 04*
 8. Microservices — *coming in phase 05*
 9. Combining styles — *coming in phase 06*
@@ -540,7 +549,7 @@ The opposite of a rich model is an **anemic domain model**: classes with only ge
 - A **command** changes state and returns little or nothing: `PlaceOrder`, `PayOrder`. Commands go through the business rules, usually through an aggregate.
 - A **query** reads state and changes nothing: `GetOrder`, `ListProducts`. Queries can skip the domain model entirely and read straight into the response shape with a **projection** (a query that selects only the columns the response needs, `Select(o => new OrderResponse(...))`, instead of loading whole entities), which is simpler and faster.
 
-The light version (used in 03) is just this split in the code, over **one database**: command handlers load aggregates and save them, while query handlers run a projection (`Select(o => new OrderResponse(...))`) with `AsNoTracking`. The heavy version uses **separate read and write databases** kept in sync by events. It is powerful for very read-heavy systems, but it brings eventual consistency (§3.10). CQRS is a choice on axis D and fits any style on axis A.
+The light version (used in 03) is just this split in the code, over **one database**: command handlers load aggregates and save them, while query handlers run a projection that selects only the columns the response needs and builds no aggregate. The heavy version uses **separate read and write databases** kept in sync by events. It is powerful for very read-heavy systems, but it brings eventual consistency (§3.10). CQRS is a choice on axis D and fits any style on axis A.
 
 ### 3.9 Primer: events and messaging
 
@@ -864,6 +873,8 @@ The architecture tests are in [`LayerRulesTests.cs`](../01-layered/tests/Shop.La
 | `Business_DoesNotReferenceApi` | No Business type depends on an Api type | The Api calls Business, never the other way round |
 
 The last two can never fail today: breaking them would need a circular project reference, which MSBuild refuses to build. They are kept so the whole rule set is written down in one place. The first three can fail without any compiler error. A single `<FrameworkReference Include="Microsoft.AspNetCore.App" />` in the Business project is enough to break `Business_DoesNotDependOnAspNetCore`. That is the general lesson: **an architecture test earns its place when it checks something the project references do not already prevent.**
+
+`Api_DoesNotUseTheDbContext` reads the compiled IL instead of using ArchUnitNET, because the endpoints are async lambdas whose bodies ArchUnitNET does not see (§6.6 tells how this was found).
 
 **The honest limit.** "Api does not reference Data" is the classic rule of this style, and the project file obeys it. Yet `ProductResponse.From(Product product)` takes a Data entity and `OrderResponse` exposes Data's enums. They compile because the Api sees Data *transitively* through Business. An ArchUnitNET rule "Api types do not depend on Data types" would fail on this code, so the test checks what can honestly be enforced here: the declared reference, and no use of the database itself. Two ways out exist. Set `DisableTransitiveProjectReferences` so the Api cannot see Data at all, which forces the Business layer to return its own types. Or put the business model somewhere that does not depend on the database, which is version 02. **Strict layering** means each layer uses only the one directly below; **relaxed layering** lets a layer use any layer beneath it. This version is strict on paper and relaxed in practice. That is common, and worth noticing in any codebase you review.
 
@@ -1197,6 +1208,8 @@ The architecture tests are in [`CleanArchitectureRulesTests.cs`](../02-clean-hex
 | `OnlyPersistenceAdapters_RehydrateValueObjects` | Only Infrastructure calls `Rehydrate` | Skipping validation is safe only for data read back from storage | No |
 | `DomainModel_HasNoPublicSetters` | No domain property has a public setter | The rules hold only if they cannot be bypassed | No |
 
+`Application_DoesNotUseEfCoreOrAspNetCore`, `Api_UsesInfrastructureOnlyInTheCompositionRoot` and `OnlyPersistenceAdapters_RehydrateValueObjects` read the compiled IL (`CompiledCode.cs`): the use cases and the endpoints do their work inside async lambdas, which ArchUnitNET does not see into (§6.6).
+
 Two tools work together here. **Project references** stop the wrong *direction* at compile time. **`internal`** hides the adapters: `ShopDbContext` and the repositories cannot be named outside Infrastructure. The **tests** catch what neither can see: packages, namespaces, setters, where interfaces live.
 
 ### 5.7 What changed from version 01
@@ -1256,6 +1269,278 @@ The code grew by more than half. That is the honest cost, paid in mapping (value
 
 ---
 
+## 6. Vertical Slice
+
+Code: [`03-vertical-slice/`](../03-vertical-slice/README.md). Decisions: [ADR 0001](../03-vertical-slice/docs/adr/0001-vertical-slices.md), [ADR 0002](../03-vertical-slice/docs/adr/0002-no-mediator-library.md), [ADR 0003](../03-vertical-slice/docs/adr/0003-cqrs-light.md).
+
+### 6.1 The idea
+
+Versions 01 and 02 cut the code **horizontally**, by technical role: endpoints here, business logic there, data access somewhere else. Placing an order touches a file in every layer. **Vertical Slice Architecture** cuts it the other way: **one slice per use case**, and everything that use case needs lives together. Its request, validation, logic, database access and route all go in one file: [`Features/Ordering/PlaceOrder.cs`](../03-vertical-slice/src/Shop.Slice.Api/Features/Ordering/PlaceOrder.cs).
+
+The insight behind it, popularised by Jimmy Bogard around 2018: most changes are requests for **a feature** ("orders need a gift message"), not for **a layer** ("change all the repositories"). So group code by what changes together. That is *cohesion* (§3.5) applied to use cases.
+
+**Analogy.** Two ways to write a cookbook. One has a chapter for all chopping, a chapter for all frying and a chapter for all plating; to cook one dish you jump between three chapters. The other has one page per recipe. Layers are the first book; slices are the second. Shared basics (how to make a stock) still get their own pages, and in this codebase that is the `Domain` folder.
+
+Two things come with it:
+
+- **Light CQRS** (§3.8). Slices that change data (**commands**) load aggregates and let the domain decide. Slices that read (**queries**) skip the model entirely and project the columns they show straight into the response. Same database, two styles of code.
+- **Fewer abstractions.** No repositories, no ports, no mediator library: each slice uses EF Core's `DbContext` directly. The structure comes from folders and architecture tests, not from project references.
+
+In Java/Spring this is **package-by-feature** (`com.shop.ordering.placeorder` containing its controller, request and service) instead of package-by-layer (`controller`, `service`, `repository`).
+
+### 6.2 Slices and their responsibilities
+
+**Layers versus slices**, the same use cases drawn both ways:
+
+```mermaid
+flowchart LR
+    subgraph layers["01 / 02: horizontal layers"]
+        direction TB
+        L1["Api: all endpoints"] --> L2["Business / Application: all use cases"] --> L3["Data / Infrastructure: all data access"]
+    end
+    subgraph slices["03: vertical slices"]
+        direction TB
+        S1["CreateProduct<br/>route + validation + EF code"]
+        S2["PlaceOrder<br/>route + validation + EF code"]
+        S3["GetOrder<br/>route + projection"]
+        D["Domain<br/>(shared rules)"]
+        S1 --> D
+        S2 --> D
+    end
+```
+
+**Folders** (one project, `Shop.Slice.Api`, plus tests):
+
+```
+src/Shop.Slice.Api/
+  Features/
+    Catalog/   CreateProduct.cs  ListProducts.cs  GetProduct.cs  ChangeProductPrice.cs  AdjustStock.cs  ProductResponse.cs
+    Ordering/  PlaceOrder.cs  GetOrder.cs  PayOrder.cs  CancelOrder.cs  OrderResponse.cs
+    Payments/  GetPayment.cs
+  Domain/          ← copied from 02: Product, Order, Money, OrderFulfillment… (the rules worth a model)
+  Infrastructure/  ← ShopDbContext + configurations + migrations, retry helper, FakePaymentGateway
+  Common/          ← IEndpoint + discovery, validation helper, error types, ProblemDetails handler
+  Program.cs
+```
+
+```mermaid
+flowchart TD
+    F["Features/&lt;Context&gt;/&lt;UseCase&gt;<br/>one slice per use case"]
+    R["Features/&lt;Context&gt;<br/>shared response shapes"]
+    D["Domain"]
+    I["Infrastructure<br/>ShopDbContext, gateway"]
+    C["Common<br/>IEndpoint, errors, validation"]
+    F --> R
+    F --> D
+    F --> I
+    F --> C
+    I --> D
+    I --> C
+    R --> D
+```
+
+| Part | Responsibility | May know | Must NOT know | Example file |
+|---|---|---|---|---|
+| **A slice** (`Features/<Context>/<UseCase>`) | One use case end to end: request record, input validation, handler, route | Domain, `ShopDbContext`, Common, its context's response shapes | **Any other slice** | [`PlaceOrder.cs`](../03-vertical-slice/src/Shop.Slice.Api/Features/Ordering/PlaceOrder.cs) |
+| **Context response shapes** | The JSON a context answers with, shared by its slices (it is the API contract) | Domain (to map from aggregates) | Slices | [`OrderResponse.cs`](../03-vertical-slice/src/Shop.Slice.Api/Features/Ordering/OrderResponse.cs) |
+| **Domain** | Aggregates, value objects, `OrderFulfillment`: the rules with real logic | Nothing else | Features, Infrastructure, EF Core, ASP.NET Core | [`Domain/Ordering/Order.cs`](../03-vertical-slice/src/Shop.Slice.Api/Domain/Ordering/Order.cs) |
+| **Infrastructure** | EF Core mapping and migrations, the save-retry helper, the fake payment gateway | Domain, Common (error types), EF Core, Npgsql | Features | [`DbConcurrency.cs`](../03-vertical-slice/src/Shop.Slice.Api/Infrastructure/Persistence/DbConcurrency.cs) |
+| **Common** | Cross-cutting plumbing: endpoint discovery, errors, `ValidationErrors` | ASP.NET Core, Domain exceptions | Features | [`Endpoints.cs`](../03-vertical-slice/src/Shop.Slice.Api/Common/Endpoints.cs) |
+
+**How a slice gets its route.** Each slice has a small class implementing [`IEndpoint`](../03-vertical-slice/src/Shop.Slice.Api/Common/Endpoints.cs) with one method, `Map`. At startup `AddEndpoints` finds every such class by reflection, and `MapEndpoints` calls them. `Program.cs` has no list of routes, and a new use case is a new file and nothing else. That is the useful part of a "mediator" library (ADR 0002). The rest, a request/handler pipeline with behaviours, is not needed here: ASP.NET Core already has middleware and endpoint filters.
+
+**Data shapes at each boundary** for `POST /api/orders`:
+
+| Boundary | Type | Defined in | Why |
+|---|---|---|---|
+| Client → slice | JSON → `PlaceOrderRequest` | The slice itself | It belongs to this use case only |
+| Slice ↔ Domain | `Product`, `Order` aggregates, `Quantity`, `Money` | Domain | Commands still let the model decide |
+| Slice ↔ database | Aggregates through `ShopDbContext` (no repository) | Infrastructure | EF Core *is* the data-access abstraction here |
+| Slice → client | `OrderResponse` | `Features/Ordering` | The ordering contract, shared by the four ordering slices |
+
+There is no command type and no use-case class. The request record goes straight to the handler: one fewer type per operation than 02.
+
+**The database schema.** Database `shop_slice`, the same tables and columns as 01 and 02 (§5.2 has the diagram). `LineNumber` is already in this version's first migration, `InitialCreate`, because 03 was born after the column existed. In 01 and 02 it came with a second migration. The resulting schema is unchanged. To inspect it, `scripts/create-schemas.sh 03` writes the SQL, `dotnet ef migrations script --project 03-vertical-slice/src/Shop.Slice.Api` prints it, and `docker compose exec postgres psql -U shop -d shop_slice -c '\d+ orders'` shows one table as it exists.
+
+### 6.3 Using it
+
+```bash
+docker compose up -d
+dotnet run --project 03-vertical-slice/src/Shop.Slice.Api      # http://localhost:5103
+dotnet test 03-vertical-slice/Shop.slnx
+```
+
+Use [`http/shop.http`](../http/shop.http) with `@baseUrl = {{slice}}`. The log categories now name the slices (`Shop.Slice.Api.Features.Ordering.PlaceOrder.PlaceOrderEndpoint`), so the logs read like a list of use cases.
+
+**Try this**
+
+- **Add a use case** in one file: `Features/Catalog/ListLowStock.cs` with an `IEndpoint` that maps `GET /api/products/low-stock` and projects products with `Stock < 5`. Restart: the route exists. Nothing else changed.
+- **Make a slice call another.** Use `GetOrderEndpoint` from `PlaceOrder.cs`. `Features_DoNotReferenceOtherFeatures` fails and names both slices.
+- **Save in a query.** Call `db.SaveChangesAsync()` in `GetOrder.cs`. `Queries_DoNotModifyState` fails.
+- **Read a slice top to bottom.** Open `PlaceOrder.cs` and compare it with what the same request crosses in 02: an endpoint, a command, a use case, two ports, two repositories and a unit of work, in four projects.
+
+### 6.4 Commands and queries: light CQRS
+
+**Commands** (`CreateProduct`, `ChangeProductPrice`, `AdjustStock`, `PlaceOrder`, `PayOrder`, `CancelOrder`) need the rules, so they load tracked aggregates, call domain methods and `SaveChanges`. They use the same optimistic `xmin` check and bounded retry as 02 (§5.5, step 7), here as an extension method on the `DbContext`, `RetryOnConflictAsync`.
+
+**Queries** (`ListProducts`, `GetProduct`, `GetOrder`, `GetPayment`) need no rules: a read cannot break an invariant. So they skip the model. [`GetOrder`](../03-vertical-slice/src/Shop.Slice.Api/Features/Ordering/GetOrder.cs) asks EF Core for exactly the columns of the response, with lines sorted by `LineNumber` in SQL. It projects into an anonymous type, so no aggregate is built. Each column still arrives as its value object (EF Core's converters run on every read), so the last step maps `Money` → `decimal`. The **change tracker** is EF Core's record of every entity it loaded, used to find what to update on `SaveChanges`. It does not get involved either: EF Core tracks only *entities*, and a projection returns none. The `AsNoTracking()` in the query slices is therefore a statement of intent ("this is a read"). It would only matter if a query returned whole entities, which these never do.
+
+This is **CQRS without two databases**: one model and one store, but two code paths that can evolve separately. It lets the read side do what the write side must not. It can join tables freely, add columns for screens, or later move to a read replica or to raw SQL, all without touching a rule. Splitting into **two stores** (a separate read database fed by events) is a much bigger step. It pays off when reads and writes have very different load or shape, and it costs eventual consistency (§3.10). This shop needs nothing of the kind.
+
+Queries in 01 and 02 went through the same service or use case and loaded full objects. Here, `GetOrder` and `PayOrder` share nothing but the `OrderResponse` shape.
+
+### 6.5 Journey of a request
+
+`POST /api/orders`, in one file:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    box Slice: Features/Ordering/PlaceOrder.cs
+        participant E as PlaceOrderEndpoint
+    end
+    box Domain
+        participant F as OrderFulfillment
+        participant AG as Product / Order
+    end
+    box Infrastructure
+        participant DB as ShopDbContext + RetryOnConflictAsync
+    end
+    participant PG as PostgreSQL
+    C->>E: POST /api/orders
+    E->>E: Validate(request) to lines and quantities
+    E->>DB: Products.Where(id in lines).ToDictionaryAsync
+    DB->>PG: SELECT … FROM products
+    E->>F: Place(orderId, customerId, lines, now)
+    F->>AG: CanReserve, Order.Place, Reserve
+    F-->>E: Order
+    E->>DB: Orders.Add(order), SaveChangesAsync
+    DB->>PG: BEGIN, INSERT orders, UPDATE products … WHERE xmin = …, INSERT order_lines, COMMIT
+    DB-->>E: saved (on a conflict: clear, run the attempt again)
+    E-->>C: 201 Created + OrderResponse
+```
+
+**Reception (the slice's endpoint)**
+
+1. The framework part is §4.4. Endpoint discovery mapped `POST /api/orders` to `PlaceOrderEndpoint.HandleAsync` at startup; binding builds a `PlaceOrderRequest` and resolves `ShopDbContext`, `TimeProvider` and the logger from DI. There is no layer between the route and the use case: **the endpoint is the use case**.
+
+**Processing (still in the same file, using Domain and Infrastructure)**
+
+2. `Validate` does the input validation (same rules and field names as 02, through `ValidationErrors`).
+3. `db.RetryOnConflictAsync` ([`DbConcurrency.cs`](../03-vertical-slice/src/Shop.Slice.Api/Infrastructure/Persistence/DbConcurrency.cs)) wraps the attempt.
+   *Boundary slice → Infrastructure: the call goes towards the database and the dependency points the same way, at EF Core. There is no port and no inversion here, unlike 02. The slice depends on EF Core directly, as 01's Business layer did, but only inside this one file.*
+4. The slice loads the products as tracked aggregates and reports unknown ids as validation errors.
+5. [`OrderFulfillment.Place`](../03-vertical-slice/src/Shop.Slice.Api/Domain/Ordering/OrderFulfillment.cs) decides, exactly as in 02: reserve all lines or none, `AwaitingPayment` or `Rejected`. **The business rules run in the Domain**, which knows nothing about slices or EF Core.
+   *Boundary slice → Domain: call and dependency both point at the domain.*
+6. `db.Orders.Add(order)` and `SaveChangesAsync`: **one transaction**, the order insert plus each changed product guarded by its `xmin`. On a conflict, EF Core throws `DbUpdateConcurrencyException`; the helper clears the change tracker and runs steps 4–6 again (up to 15 times), then gives up with `409`.
+
+**Response (the slice)**
+
+7. `OrderResponse.From(order)` and `201 Created`.
+
+**The error path** is the same as 02's, with the same handler, now in `Common/`:
+
+- **`400`.** `Validate` throws a `ValidationException` with every invalid field; a malformed body never reaches the slice (`BadHttpRequestException`).
+- **`409`.** The domain throws `BusinessRuleViolationException` (pay a paid order, stock out of range), or the slice throws `ConflictException` (duplicate SKU, detected with `IsUniqueViolation()`, or concurrency retries exhausted).
+- **`404`.** The slice throws `NotFoundException`.
+
+[`ProblemDetailsExceptionHandler`](../03-vertical-slice/src/Shop.Slice.Api/Common/ProblemDetailsExceptionHandler.cs) maps each one. The pay-versus-cancel window described in §5.5 exists here too, with the same warning log.
+
+**The query journey** is shorter. `GET /api/orders/{id}` → `GetOrderEndpoint` → one `SELECT` with the columns it needs → `OrderResponse`. No Domain, no retry, no tracking.
+
+**Where would I change…**
+
+| Change | Files touched |
+|---|---|
+| Add a field to products (`Description`) | `Product` (domain), `Configurations.cs` + a migration, `ProductResponse`, `CreateProduct.cs`, and each query slice that should show it (`GetProduct.cs`, `ListProducts.cs`) |
+| Change a rule (max 500 units per line) | `Quantity.Max` in Domain |
+| Change only how the order list is read (add a column, a join) | That one query slice |
+| Add a use case | **One new file** under `Features/` |
+| Switch the database, same ORM (PostgreSQL → SQL Server) | Infrastructure only: `UseNpgsql`, the `xmin` row version, `IsUniqueViolation`, regenerated migrations. The slices use EF Core, not PostgreSQL || Switch the data-access technology (EF Core → Dapper) | **Every slice** that touches the database: there is no port to swap behind |
+| Replace the payment gateway | `FakePaymentGateway` and the one slice that uses it |
+
+Use cases are cheap to add and change. Cross-cutting technology changes cost more than in 02, because there is no port to swap behind.
+
+### 6.6 Rules
+
+A single project has no project references to enforce anything, so every boundary is an architecture test ([`SliceRulesTests.cs`](../03-vertical-slice/tests/Shop.Slice.ArchitectureTests/SliceRulesTests.cs)):
+
+| Test | Rule | Why |
+|---|---|---|
+| `Features_DoNotReferenceOtherFeatures` | No type in one slice namespace uses a type in another slice | A change to one use case must not ripple into others |
+| `SharedCode_DoesNotDependOnSlices` | Domain, Infrastructure, Common and the context response shapes use no slice | Shared code that depends on one slice breaks every other slice when that one changes |
+| `Domain_DoesNotDependOnFeaturesOrEfCore` | Domain uses no Features, Infrastructure, Common, EF Core, ASP.NET Core or Npgsql | The rules stay pure and testable (the 02 rule, inside one project) |
+| `Queries_DoNotModifyState` | `Get*` and `List*` slices call nothing that writes: no `SaveChanges`, `ExecuteUpdate`/`ExecuteDelete`, raw SQL commands, `Add`/`Update`/`Remove`/`Attach`, change tracker or retry helper | Light CQRS: reads are safe to optimise |
+| `OnlyInfrastructure_RehydratesValueObjects` | Only Infrastructure calls `Rehydrate` | Skipping validation is safe only for stored data |
+| `Endpoints_LiveInsideASlice` | Every `IEndpoint` is sealed and lives in a slice namespace | A route always sits next to its handler |
+
+**A lesson about testing the tests.** Building these rules went wrong twice, in two different ways. Both mistakes produced rules that passed whatever the code did.
+
+1. **A rule that selects nothing passes.** The first "queries do not save" rule said, in ArchUnitNET, "types in a query namespace should not call any method whose name starts with `SaveChanges`". But `SaveChangesAsync` is declared in EF Core's assembly, which was not loaded into the analysis. So the selection "methods named SaveChanges…" matched **zero** methods, and "call none of zero methods" is always true.
+2. **Code the tool cannot see passes.** C# compiles every lambda and every `async` method into generated classes: closures, and a **state machine** for each async body. ArchUnitNET attributes calls made directly in an async method back to the type that wrote them, but not what happens *inside an async lambda*. That is exactly where these slices do their work (`RetryOnConflictAsync(async () => …)`), and where every endpoint of 01 and 02 lives (`MapPost(…, async (…) => …)`). A slice could have used another slice there, or a query saved there, and no rule would notice.
+
+The fix is [`CompiledCode.cs`](../03-vertical-slice/tests/Shop.Slice.ArchitectureTests/CompiledCode.cs): about a hundred lines that read the compiled **IL** (Intermediate Language, what C# compiles to) with **Mono.Cecil**. It attributes every type and call in a generated class back to the class written in source. The rules about *what code does* now use it. Each one was then broken on purpose inside an async lambda, and each one failed. The same blind spot existed in some rules of 01 and 02, which now use the same reader. **An architecture test you have never seen fail proves nothing**, and "seen fail" must include the places where the real code lives.
+
+**When is duplication across slices fine?** `GetProduct` and `ListProducts` repeat the same projection, and `PayOrder` and `CancelOrder` both load the products of an order. That is on purpose: each can change without the other. The rule of thumb is to duplicate *access code* (queries, mapping) freely and never duplicate a *business rule*. Rules go to the Domain, where `OrderFulfillment` serves every slice. Duplication becomes a smell when the same change keeps landing in several slices: that is the signal to extract.
+
+### 6.7 What changed from version 02
+
+The three versions so far, side by side:
+
+| | 01 Layered | 02 Clean / Hexagonal | 03 Vertical Slice |
+|---|---|---|---|
+| Organised by | Technical layer (3 projects) | Technical layer (4 projects), dependencies inverted | Use case (1 project, a folder per context, a file per use case) |
+| A use case is | A method in a service | Endpoint + command + use-case class + ports + adapters | One file |
+| Data access | `DbContext` in the Business services | Repositories and unit of work behind ports | `DbContext` directly in the slice |
+| Reads | Same services, whole entities | Through the use case and the repository, full aggregates | Projections, no aggregate |
+| Where the rules are | Services (anemic entities) | Aggregates, value objects, `OrderFulfillment` | **Same Domain as 02** (copied) |
+| Stock concurrency | Conditional `UPDATE` | Optimistic `xmin` + retry | Optimistic `xmin` + retry |
+| Boundaries enforced by | Project references + tests | Project references + `internal` + tests | Tests only |
+| Endpoint registration | Mapped by hand | Mapped by hand in `Endpoints.cs` | Discovered (`IEndpoint`) |
+| Unit tests without a database | 12 (pure helpers) | 75 (domain + use cases with fakes) | 62 (domain only); slices are tested through HTTP |
+| C# lines in `src/` (without migrations) | about 1,010 in 24 files | about 1,600 in 29 files | about 1,500 in 33 files (Domain 560, Features 500) |
+
+The use cases did not get simpler: the domain carries the same rules. What disappeared is the scaffolding around them. The ports, repositories and commands are gone, and so is the ability to unit-test a use case with fakes. In this style a slice is tested from the outside, through HTTP, against a real database; the contract tests already do exactly that.
+
+### 6.8 Trade-offs
+
+**Benefits**
+
+- A use case is in one place. Reading, changing or deleting it is local, and new ones do not touch existing files.
+- Little ceremony. No interface with a single implementation, no command type that copies a request, no mediator library.
+- Each slice picks the right tool: an aggregate for a command, a projection for a query, raw SQL for a report.
+- It scales across a team well: two people working on two use cases rarely touch the same file.
+
+**Costs**
+
+- Cross-cutting changes are spread out. A new auditing rule for every command means editing every command slice (or adding an endpoint filter).
+- Slices depend on EF Core directly. Another database behind EF Core stays in Infrastructure, but another data-access technology touches every slice: there is no port to swap.
+- Business logic in slices is tested through HTTP and a database, which is slower than 02's unit tests. Rules that live in the Domain still get fast tests.
+- Discipline is needed. Without the domain and the architecture tests, slices drift into copy-pasted transaction scripts (§3.2), and the same rule ends up implemented three times, slightly differently.
+- The structure is less familiar to people used to layers, and "where do shared things go?" needs an explicit answer (here: Domain, Infrastructure, Common, context response shapes).
+
+**When to use it.** Applications with many use cases that change independently: most line-of-business APIs. It is also a common default for new .NET services, often with a rich domain only where the rules are complex.
+
+**When NOT to use it.** When infrastructure must be swappable or several delivery mechanisms share the same use cases (02 does that better), or for a tiny CRUD app where even slices are more structure than needed.
+
+### 6.9 Interview questions
+
+1. **What is Vertical Slice Architecture?**
+   Organising code by use case instead of by technical layer. Each slice contains everything one request needs: input, validation, logic, data access, output. Coupling is minimised between slices and cohesion maximised within each.
+2. **How is it different from Clean Architecture? Can they be combined?**
+   Clean cuts horizontally and protects the core with dependency inversion. Slices cut vertically and accept direct dependencies inside a slice. They combine well: slices for the application layer, a clean domain shared by all slices. This version does exactly that, and version 04 uses different styles per module.
+3. **Do you need MediatR for vertical slices?**
+   No. A mediator gives a uniform handler shape and a pipeline for cross-cutting concerns. Minimal APIs with endpoint discovery, endpoint filters and middleware cover both here. Plus, since version 13 (2025) MediatR is dual-licensed: commercial, with a free tier for small users.
+4. **What is CQRS, and does it need two databases?**
+   Command Query Responsibility Segregation: separate code paths for changing and reading data. The light form uses one database, commands through the domain model, queries as projections. Two databases are a separate, much costlier decision with eventual consistency.
+5. **What do you do about duplication between slices?**
+   Accept duplicated access code; never duplicate business rules. Push rules into the domain, and extract shared code only when the same change keeps hitting several slices.
+6. **How do you keep slices from depending on each other?**
+   Namespaces per slice, plus architecture tests that fail when one slice uses another. Make sure those tests have been seen to fail, including for code inside lambdas and async methods, which some tools do not see.
+
+---
+
 ## Glossary
 
 Terms are added as each chapter introduces them. The section where a term is explained is in brackets.
@@ -1277,6 +1562,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Business layer**: in a layered architecture, the layer with the rules and the transactions, between presentation and data access. [§4.1]
 - **Call direction / dependency direction**: who calls whom at runtime, versus whose code references whose at compile time. [§3.6]
 - **Central package management**: all NuGet versions in one `Directory.Packages.props`. [§2.5]
+- **Change tracker (EF Core)**: EF Core's record of every entity it loaded or was given, used to work out what to write on `SaveChanges`. Projections that return no entities are not tracked. [§6.4]
 - **Clean Architecture**: Robert C. Martin's version of "business rules in the centre, dependencies point inwards" (2012/2017). [§3.4]
 - **Clean Code**: Robert C. Martin's book (2008) about writing readable code in the small. Not an architecture. [§3.3]
 - **CLI**: Command-Line Interface; here, the `dotnet` command. [§1.1]
@@ -1309,6 +1595,8 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **DTO**: Data Transfer Object, a plain type that only carries data across a boundary (a request or response record). [§4.2]
 - **EF Core / EF Core entity**: Entity Framework Core, the .NET object-relational mapper that maps classes to tables. An EF Core entity is a class mapped to a table; it is not the same idea as a DDD entity. [§4.2]
 - **Endpoint**: in ASP.NET Core, the code that handles one method and path (`POST /api/orders`). [§4.4]
+- **Endpoint discovery**: finding every endpoint class at startup by reflection and mapping it, so no central list of routes exists (`IEndpoint` in version 03). [§6.2]
+- **Endpoint filter**: ASP.NET Core code that runs before and after one endpoint or a group of endpoints; the place for cross-cutting behaviour without a mediator. [§6.2]
 - **Entity**: a domain object with an identity that lasts through changes. [§3.7]
 - **ER diagram**: Entity-Relationship diagram, a picture of the tables, their columns and how they relate. [§4.2]
 - **Event**: a fact about something that happened (`OrderPlaced`). [§3.9]
@@ -1321,6 +1609,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Hexagonal Architecture / Ports and Adapters**: Alistair Cockburn's style (2005): the application defines ports, and adapters connect them to technologies. [§3.4]
 - **Idempotency key**: a unique value sent with a request (such as the order id with a charge) so the receiver can recognise a repeat and do the work only once. [§4.5]
 - **Idempotent**: doing it twice has the same effect as doing it once. [§3.9]
+- **IL (Intermediate Language)**: what C# compiles to; the code inside a `.dll`. Architecture tests can read it to see what code really calls. [§6.6]
 - **Inbox**: a table of already-handled message ids, used to ignore duplicate deliveries. [§3.9]
 - **Input port**: an interface through which a driving adapter calls a use case (`IPlaceOrder`). Here the use-case class itself plays that role. [§5.2]
 - **Input validation**: checking that a request is well formed and reporting which field is wrong; done at the application boundary. Compare invariant. [§5.5]
@@ -1331,6 +1620,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Lasagna code**: so many pass-through layers that each one adds code but no decision. [§4.8]
 - **Layer**: a group of code with one kind of responsibility, with rules about which layers it may use. [§3.2]
 - **Local tool manifest**: `.config/dotnet-tools.json`, the list of .NET tools (such as `dotnet-ef`) a repo uses; `dotnet tool restore` fetches them for that repo only. [§1.5]
+- **Mediator (pattern / library)**: an object that receives a request and dispatches it to its handler, often with a pipeline of behaviours (MediatR is the best-known .NET library). Not used here. [§6.2]
 - **Mermaid**: a text format for diagrams, rendered by GitHub and by VS Code with an extension. [§1.2]
 - **Message**: a piece of data sent from one part of a system to another, often through a broker. [§3.9]
 - **Message broker**: a server that receives messages and delivers them to consumers through queues (RabbitMQ). [§3.9]
@@ -1341,6 +1631,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Model binding**: the framework step that turns route values, query strings and the JSON body into the parameters of an endpoint. [§4.4]
 - **Modular monolith**: one deployable split inside into modules with strict boundaries. [§3.2]
 - **Module**: a part of an application with a clear boundary and a small public surface. [§3.2]
+- **Mono.Cecil**: a .NET library that reads and writes compiled assemblies (their IL); ArchUnitNET is built on it, and the architecture tests use it directly to see inside lambdas. [§6.6]
 - **Monolith**: an application deployed as a single unit. [§3.2]
 - **MSBuild**: the .NET build engine that reads `.csproj` and `.props` files. [§1.1]
 - **N-tier (layered) architecture**: horizontal layers (presentation → business → data), each calling the one below. [§3.2]
@@ -1350,6 +1641,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Optimistic concurrency**: detecting, at save time, that someone else changed the row since you read it, and retrying. [§3.10]
 - **Outbox (transactional)**: saving outgoing messages in the same transaction as the data and publishing them afterwards, so none is lost. [§3.9]
 - **Owned entity (EF Core)**: an entity stored and loaded only together with its owner, like order lines with their order. [§5.2]
+- **Package-by-feature**: the Java name for organising packages by feature instead of by layer; the idea behind vertical slices. [§6.1]
 - **Persistence ignorance**: domain classes that know nothing about how they are stored (no ORM attributes, no database types). [§5.8]
 - **Port**: in Hexagonal Architecture, an interface defined by the application for something it needs or offers. [§3.4]
 - **PostgreSQL**: the open-source relational database used by every version. [§1.3]
@@ -1360,6 +1652,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Projection**: a query that selects exactly the data a response needs, instead of loading whole entities. [§3.8]
 - **Query**: a request that reads state and changes nothing (`GetOrder`). [§3.8]
 - **RabbitMQ**: the open-source message broker used by version 05. [§3.9]
+- **Read replica**: a read-only copy of a database that serves queries, so reads do not load the main database. [§6.4]
 - **Rehydration**: turning stored data back into domain objects, without re-running today's validation rules on it. [§5.2]
 - **Relaxed / strict layering**: strict means a layer may use only the layer directly below it; relaxed means any layer below. [§4.6]
 - **Repository**: a collection-like interface to load and save aggregates. [§3.7]
@@ -1382,6 +1675,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Software architecture**: the decisions about a system's structure that are expensive to change. [§3.1]
 - **SOLID**: five object-oriented design principles: Single responsibility, Open/closed, Liskov substitution, Interface segregation, Dependency inversion. [§3.6]
 - **Solution (`.slnx`)**: a file that groups the projects worked on together. [§2.1]
+- **State machine (async)**: the class the C# compiler generates for an `async` method or lambda; the body moves into it. Tools that inspect compiled code must attribute it back to the type that wrote it, or they miss what it does. [§6.6]
 - **Strong consistency**: every reader sees the latest committed data at once, as with one database transaction. [§3.10]
 - **Test double / fake**: an object that stands in for a real dependency in a test; a fake is a small working implementation (the in-memory repositories). [§5.5]
 - **Testcontainers**: a library that starts throwaway Docker containers for tests. [§1.3]
@@ -1395,7 +1689,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Use case (interactor)**: one application operation as one class (`PlaceOrder`): validate, load, let the domain decide, save. [§5.1]
 - **Value converter (EF Core)**: code that turns a property into a column value and back (`Money` to `numeric`). [§5.2]
 - **Value object**: an immutable domain object defined only by its values (`Money`). [§3.7]
-- **Vertical Slice architecture**: code organised by use case, one folder per feature, instead of by technical layer. [§3.2]
+- **Vertical Slice architecture**: code organised by use case, one slice (here one file) per use case, instead of by technical layer. [§3.2, §6.1]
 - **Volume (Docker)**: storage that outlives a container, used here to keep the database data. [§1.3]
 - **WebApplicationFactory**: starts an ASP.NET Core app in memory for tests. [§2.7]
 - **xmin**: a PostgreSQL system column that changes on every update of a row; used as a row version for optimistic concurrency. [§4.5]

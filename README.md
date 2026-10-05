@@ -6,7 +6,7 @@ One small shop implemented **five times** in .NET, each time with a different ar
 |---|---|---|---|
 | 01 | [`01-layered`](01-layered/README.md) | N-tier layered (`Api → Business → Data`) | ready |
 | 02 | [`02-clean-hexagonal`](02-clean-hexagonal/README.md) | Clean / Hexagonal (ports and adapters) with a rich domain model | ready |
-| 03 | `03-vertical-slice` | Vertical slices (one folder per use case) with light CQRS | coming |
+| 03 | [`03-vertical-slice`](03-vertical-slice/README.md) | Vertical slices (one file per use case) with light CQRS | ready |
 | 04 | `04-modular-monolith` | Modular monolith: one process, three modules, a different style per module | coming |
 | 05 | `05-microservices` | Microservices: one service per module, RabbitMQ messaging, a saga, an API gateway | coming |
 
