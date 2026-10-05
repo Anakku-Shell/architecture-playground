@@ -1,0 +1,20 @@
+<!--
+  BuildingBlocks.Infrastructure: the plumbing the modules share inside the one process: the module
+  interface, the in-process event bus, the shared database connection and transaction, error handling.
+  Only module entry projects and the Host reference it. Guide: §7.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Modular.BuildingBlocks\Shop.Modular.BuildingBlocks.csproj" />
+  </ItemGroup>
+
+</Project>

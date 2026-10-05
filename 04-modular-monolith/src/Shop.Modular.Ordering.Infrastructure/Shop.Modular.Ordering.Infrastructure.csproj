@@ -1,0 +1,19 @@
+<!--
+  Ordering.Infrastructure: every adapter of the Ordering module (EF Core persistence, the HTTP endpoints)
+  and its entry point, OrderingModule. In 02 the HTTP adapter had its own Api project; here the Host is
+  the only web project, so the module's HTTP adapter lives with its other adapters. Guide: §7.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- Design-time services for "dotnet ef migrations add"; never shipped (PrivateAssets). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Modular.BuildingBlocks.Infrastructure\Shop.Modular.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\Shop.Modular.Ordering.Application\Shop.Modular.Ordering.Application.csproj" />
+  </ItemGroup>
+
+</Project>

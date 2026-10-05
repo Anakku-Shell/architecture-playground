@@ -1,0 +1,7 @@
+<!--
+  Ordering.Domain: the Order aggregate and its value objects, as in version 02 but without Product and
+  Payment (they belong to other modules now). It references nothing. Guide: §7.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+</Project>

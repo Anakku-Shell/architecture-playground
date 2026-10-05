@@ -12,6 +12,7 @@
 #   scripts/create-schemas.sh 02-clean-hexagonal
 # Output: artifacts/sql/<version>.sql (git-ignored). Apply one with, for example:
 #   docker compose exec -T postgres psql -U shop -d shop_clean < artifacts/sql/02-clean-hexagonal.sql
+# 04 writes one file per module schema (04-modular-monolith-catalog.sql, …); apply all three to shop_modular.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -22,6 +23,9 @@ targets=(
   "01-layered|01-layered/src/Shop.Layered.Data|"
   "02-clean-hexagonal|02-clean-hexagonal/src/Shop.Clean.Infrastructure|"
   "03-vertical-slice|03-vertical-slice/src/Shop.Slice.Api|"
+  "04-modular-monolith-catalog|04-modular-monolith/src/Shop.Modular.Catalog|"
+  "04-modular-monolith-ordering|04-modular-monolith/src/Shop.Modular.Ordering.Infrastructure|"
+  "04-modular-monolith-payments|04-modular-monolith/src/Shop.Modular.Payments|"
 )
 
 only="${1:-}"

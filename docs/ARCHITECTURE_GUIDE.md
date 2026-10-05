@@ -66,7 +66,16 @@ This guide goes with the code. It explains software architecture from zero. Ever
    7. [What changed from version 02](#67-what-changed-from-version-02)
    8. [Trade-offs](#68-trade-offs)
    9. [Interview questions](#69-interview-questions)
-7. Modular monolith — *coming in phase 04*
+7. [Modular monolith](#7-modular-monolith)
+   1. [The idea](#71-the-idea)
+   2. [Modules and their responsibilities](#72-modules-and-their-responsibilities)
+   3. [How modules talk: contracts, events and one transaction](#73-how-modules-talk-contracts-events-and-one-transaction)
+   4. [Using it](#74-using-it)
+   5. [Journey of a request](#75-journey-of-a-request)
+   6. [Rules](#76-rules)
+   7. [What changed from version 03](#77-what-changed-from-version-03)
+   8. [Trade-offs](#78-trade-offs)
+   9. [Interview questions](#79-interview-questions)
 8. Microservices — *coming in phase 05*
 9. Combining styles — *coming in phase 06*
 10. Decision guide — *coming in phase 06*
@@ -533,7 +542,7 @@ Strategic DDD is what tells you **where to cut** a modular monolith into modules
 **Tactical DDD: the building blocks inside one context.**
 - **Entity**: an object with an **identity** that lasts through changes. An `Order` is still the same order after its status changes, because it keeps its id.
 - **Value object**: an object defined only by its **values**, immutable, with no id. `Money(12.50)` is equal to any other `Money(12.50)`. Value objects are a great place for rules: a `Money` that cannot be negative or have three decimals means no code anywhere can hold an invalid amount.
-- **Aggregate**: a cluster of entities and value objects treated as **one unit for changes**, with one entry point, the **aggregate root**. `Order` (the root) and its `OrderLine`s form an aggregate. You never edit a line directly. You ask the order, and the order enforces the rules ("a paid order cannot be cancelled"). A common rule of thumb (from Vaughn Vernon's *Implementing Domain-Driven Design*) is **one transaction changes one aggregate**, so aggregates stay small and do not lock each other. Versions 02–03 knowingly break it: placing an order changes the `Order` *and* the stock of each `Product` in one transaction, because in one database that is the simplest way to never oversell. Versions 04–05 show the alternative: separate steps connected by events (§3.10).
+- **Aggregate**: a cluster of entities and value objects treated as **one unit for changes**, with one entry point, the **aggregate root**. `Order` (the root) and its `OrderLine`s form an aggregate. You never edit a line directly. You ask the order, and the order enforces the rules ("a paid order cannot be cancelled"). A common rule of thumb (from Vaughn Vernon's *Implementing Domain-Driven Design*) is **one transaction changes one aggregate**, so aggregates stay small and do not lock each other. Versions 02–03 knowingly break it: placing an order changes the `Order` *and* the stock of each `Product` in one transaction, because in one database that is the simplest way to never oversell. Versions 04–05 show the alternative: each module changes only its own aggregates, and the steps are connected by events. Version 04 still runs those steps in one database transaction; version 05 gives that up too (§3.10).
 - **Domain event**: a record that something meaningful happened in the domain, named in the past tense: `OrderPlaced`, `PaymentDeclined`. Other parts react to it without the aggregate knowing them.
 - **Repository**: the collection-like interface to load and save whole aggregates (`IOrderRepository`).
 - **Domain service**: a business operation that does not naturally belong to one entity.
@@ -616,7 +625,7 @@ stateDiagram-v2
 
 - Every move to `Cancelled` gives the reserved stock back. `Rejected` never reserved any.
 - Anything else, such as paying twice, paying a rejected order or cancelling a paid one, is refused with `409 Conflict`.
-- `Pending` and `PaymentPending` exist only in version 05, where the work is asynchronous and the order waits for answers from other services.
+- `Pending` and `PaymentPending` are visible only in version 05, where the work is asynchronous and the order waits for answers from other services. Version 04 also starts an order as `Pending`, but resolves it inside the same request and transaction, so no client ever sees it (§7.5).
 
 **The public API** is identical in every version:
 
@@ -734,7 +743,7 @@ erDiagram
 - Status values are stored as **text**, not numbers (`HasConversion<string>()`). A row is readable in a SQL prompt, and reordering the enum cannot silently change the data's meaning.
 - `xmin` is not a real column. PostgreSQL keeps it on every row, and EF Core reads it as the order's row version (§4.5).
 - `order_lines.LineNumber` keeps the lines in the order the customer sent them. A table has no order of its own, and ids created in the same millisecond are not sequential. It arrived in a second migration, `AddOrderLineNumber`, the normal way a schema evolves: a new migration, never an edited old one.
-- **Foreign keys are deliberately few.** Only `order_lines → orders` has one, because a line cannot exist without its order. An order line's `ProductId` is a historical reference: the name and price were copied, so the line stays meaningful even if the product is later changed. `payments.OrderId` has a unique index but no foreign key. Both are a first hint of the boundaries between Catalog, Ordering and Payments that versions 04 and 05 turn into separate schemas and databases, where foreign keys across them are impossible.
+- **Foreign keys are deliberately few.** Only `order_lines → orders` has one, because a line cannot exist without its order. An order line's `ProductId` is a historical reference: the name and price were copied, so the line stays meaningful even if the product is later changed. `payments.OrderId` has a unique index but no foreign key. Both are a first hint of the boundaries between Catalog, Ordering and Payments. Version 04 turns them into separate schemas and keeps foreign keys out of them on purpose; version 05 turns them into separate databases, where such foreign keys are impossible.
 
 **Where to read the schema yourself.** The **migrations are the source of truth**: [`Migrations/`](../01-layered/src/Shop.Layered.Data/Migrations) in the Data project. Three ways to see it:
 
@@ -1457,7 +1466,8 @@ sequenceDiagram
 | Change a rule (max 500 units per line) | `Quantity.Max` in Domain |
 | Change only how the order list is read (add a column, a join) | That one query slice |
 | Add a use case | **One new file** under `Features/` |
-| Switch the database, same ORM (PostgreSQL → SQL Server) | Infrastructure only: `UseNpgsql`, the `xmin` row version, `IsUniqueViolation`, regenerated migrations. The slices use EF Core, not PostgreSQL || Switch the data-access technology (EF Core → Dapper) | **Every slice** that touches the database: there is no port to swap behind |
+| Switch the database, same ORM (PostgreSQL → SQL Server) | Infrastructure only: `UseNpgsql`, the `xmin` row version, `IsUniqueViolation`, regenerated migrations. The slices use EF Core, not PostgreSQL |
+| Switch the data-access technology (EF Core → Dapper) | **Every slice** that touches the database: there is no port to swap behind |
 | Replace the payment gateway | `FakePaymentGateway` and the one slice that uses it |
 
 Use cases are cheap to add and change. Cross-cutting technology changes cost more than in 02, because there is no port to swap behind.
@@ -1541,6 +1551,432 @@ The use cases did not get simpler: the domain carries the same rules. What disap
 
 ---
 
+## 7. Modular monolith
+
+Code: [`04-modular-monolith/`](../04-modular-monolith/README.md). Decisions: [ADR 0001](../04-modular-monolith/docs/adr/0001-modular-monolith.md), [ADR 0002](../04-modular-monolith/docs/adr/0002-style-per-module.md), [ADR 0003](../04-modular-monolith/docs/adr/0003-schema-per-module.md), [ADR 0004](../04-modular-monolith/docs/adr/0004-in-process-integration-events.md).
+
+### 7.1 The idea
+
+Versions 01–03 are **one model**. Any class can use any other class and any query can read any table. Nothing stops the payment code from reading product rows or the catalog from changing an order. Over the years that is how a monolith becomes a **big ball of mud** (§3.2). Microservices (chapter 8) fix this with walls made of networks, at a high price. A **modular monolith** gets the walls without paying for the network.
+
+The system is still **one deployable**: one process and one database. Inside, it is split into **modules**, one per **bounded context** (§3.7): Catalog, Ordering and Payments. Each module has:
+
+- **its own code**, which is `internal`: other modules cannot use its classes, and the compiler enforces that;
+- **its own data**, in its own database **schema** (`catalog`, `ordering`, `payments`), which no other module reads or writes;
+- **a public contract**, a separate `*.Contracts` project with the only types other modules may know: query interfaces for questions that need an answer now ("what do these products cost?") and **integration events** for facts ("an order was placed").
+
+**Analogy.** An office building shared by three companies. The building provides power, lifts and a reception desk; here that is the Host and the building blocks. Each company has its own locked floor and its own filing cabinets. People from different companies talk at the reception desk or by internal mail, never by walking into another company's office. If one company grows and moves to its own building (version 05), that is a move, not a divorce: the conversations stay the same, only the mail gets slower.
+
+Two things in this version are new and worth noticing:
+
+- **Each module chooses its own style.** Catalog is plain CRUD, Ordering keeps 02's Clean Architecture and rich domain, and Payments uses 03's vertical slices. An architecture style is a decision per bounded context, not one decision for the whole system (ADR 0002).
+- **One database still buys one transaction.** A request that crosses modules (placing an order reserves stock in Catalog) runs in a single database transaction, so it commits or rolls back as a whole. That is the big practical difference from version 05.
+
+The idea is old (it is what "modular programming" always meant), and it gained attention as the alternative to starting with microservices. In 2019 Shopify described how it split its large Rails monolith into components with enforced boundaries instead of into services.
+
+### 7.2 Modules and their responsibilities
+
+**Who references whom** (project references):
+
+```mermaid
+flowchart TD
+    H["Host<br/>Program.cs: the list of modules"]
+    subgraph catalog["Catalog module (CRUD)"]
+        C["Shop.Modular.Catalog"]
+        CC["Catalog.Contracts"]
+    end
+    subgraph ordering["Ordering module (Clean + DDD)"]
+        OI["Ordering.Infrastructure"]
+        OA["Ordering.Application"]
+        OD["Ordering.Domain"]
+        OC["Ordering.Contracts"]
+    end
+    subgraph payments["Payments module (vertical slices)"]
+        P["Shop.Modular.Payments"]
+        PC["Payments.Contracts"]
+    end
+    BBI["BuildingBlocks.Infrastructure<br/>IModule, bus, shared transaction"]
+    BB["BuildingBlocks<br/>IIntegrationEvent, IEventBus, errors"]
+    H --> C
+    H --> OI
+    H --> P
+    H --> BBI
+    C --> CC
+    C --> OC
+    OI --> OA
+    OA --> OD
+    OA --> OC
+    OA --> CC
+    OA --> PC
+    P --> PC
+    P --> OC
+    C --> BBI
+    OI --> BBI
+    P --> BBI
+    BBI --> BB
+    CC --> BB
+    OC --> BB
+    PC --> BB
+```
+
+Every arrow between modules ends at a `*.Contracts` project. Catalog references `Ordering.Contracts` because it consumes `OrderPlaced`, and Ordering references `Catalog.Contracts` because it asks for prices and consumes `StockReserved`. There is no cycle, because contracts reference nothing but the building blocks.
+
+```
+src/
+  Shop.Modular.Host/                      Program.cs only
+  Shop.Modular.BuildingBlocks/            IIntegrationEvent, IIntegrationEventConsumer<T>, IEventBus, errors (no dependencies)
+  Shop.Modular.BuildingBlocks.Infrastructure/
+                                          IModule, InProcessEventBus, SharedTransaction, AddModuleDbContext, error handler
+  Shop.Modular.Catalog/                   CatalogModule, Data/ (Product, CatalogDbContext), Products/ (endpoints, rules),
+                                          Integration/ (CatalogQueries, OrderPlaced and OrderCancelled consumers)
+  Shop.Modular.Catalog.Contracts/         ICatalogQueries, ProductSnapshot, StockReserved, StockReservationFailed
+  Shop.Modular.Ordering.Domain/           Order, OrderLine, Money, Quantity, ProductName, domain exceptions
+  Shop.Modular.Ordering.Application/      Ports/, UseCases/ (PlaceOrder, PayOrder, CancelOrder, GetOrder), IntegrationEvents/ (consumers)
+  Shop.Modular.Ordering.Infrastructure/   OrderingModule, Persistence/ (DbContext, repository, unit of work), Http/ (endpoints, error handler)
+  Shop.Modular.Ordering.Contracts/        OrderPlaced, OrderCancelled, PaymentRequested, OrderedItem
+  Shop.Modular.Payments/                  PaymentsModule, Features/ (ProcessPayment, GetPayment), Data/, FakePaymentGateway
+  Shop.Modular.Payments.Contracts/        PaymentSucceeded, PaymentDeclined
+```
+
+| Part | Responsibility | May know | Must NOT know | Example file |
+|---|---|---|---|---|
+| **Host** | The process and its composition root: the list of modules, JSON options, the exception middleware | Each module's `IModule`, the building blocks | Anything inside a module | [`Program.cs`](../04-modular-monolith/src/Shop.Modular.Host/Program.cs) |
+| **BuildingBlocks** | The shared vocabulary: what an integration event is, how to publish one, the common errors | Nothing (base library only) | Any framework, any module | [`IntegrationEvents.cs`](../04-modular-monolith/src/Shop.Modular.BuildingBlocks/IntegrationEvents.cs) |
+| **BuildingBlocks.Infrastructure** | The shared plumbing: `IModule`, the in-process bus, the shared connection and transaction, the error handler for shared errors | ASP.NET Core, EF Core, Npgsql, BuildingBlocks | Any module | [`SharedTransaction.cs`](../04-modular-monolith/src/Shop.Modular.BuildingBlocks.Infrastructure/Persistence/SharedTransaction.cs) |
+| **Catalog** (CRUD) | Products and stock: HTTP endpoints over its DbContext, validation rules, price lookups for others, stock reservation | Its own types, `Ordering.Contracts` (events it consumes), building blocks | Ordering's or Payments' code or tables | [`ProductEndpoints.cs`](../04-modular-monolith/src/Shop.Modular.Catalog/Products/ProductEndpoints.cs) |
+| **Ordering.Domain** | The `Order` aggregate and its value objects (02's model without products and payments) | Nothing | Everything else | [`Order.cs`](../04-modular-monolith/src/Shop.Modular.Ordering.Domain/Order.cs) |
+| **Ordering.Application** | Use cases, consumers of other modules' answers, ports | Its Domain, the contracts of the modules it talks to, `IEventBus` | EF Core, ASP.NET Core, any module's code, its own Infrastructure | [`PlaceOrder.cs`](../04-modular-monolith/src/Shop.Modular.Ordering.Application/UseCases/PlaceOrder.cs) |
+| **Ordering.Infrastructure** | Adapters (EF Core, HTTP) and the module's composition root `OrderingModule` | Application, Domain, building blocks | Other modules' code | [`OrderRepository.cs`](../04-modular-monolith/src/Shop.Modular.Ordering.Infrastructure/Persistence/OrderRepository.cs) |
+| **Payments** (slices) | Charging orders (a slice triggered by an event) and reading payments (a query slice) | Its own types, `Ordering.Contracts`, building blocks | Other modules' code or tables | [`ProcessPayment.cs`](../04-modular-monolith/src/Shop.Modular.Payments/Features/ProcessPayment.cs) |
+| **`*.Contracts`** | The public surface of one module: events it publishes, queries it answers | BuildingBlocks | Any framework, any module's internals | [`CatalogContracts.cs`](../04-modular-monolith/src/Shop.Modular.Catalog.Contracts/CatalogContracts.cs) |
+
+**How the Host composes the modules.** Each module has exactly one public class, its [`IModule`](../04-modular-monolith/src/Shop.Modular.BuildingBlocks.Infrastructure/Modules/IModule.cs) (`CatalogModule`, `OrderingModule`, `PaymentsModule`). The Host calls three methods on each: `RegisterServices` (the module registers its DbContext, consumers and use cases), `MapEndpoints` (its routes) and, in Development, `MigrateAsync` (its schema). `Program.cs` has an explicit list of modules, not reflection. Reading that one line tells you what the monolith contains.
+
+**Ordering's project layout.** Ordering has three projects, like 02, but no Api project: the Host is the only web project. The HTTP endpoints are a driving adapter, so they live in `Ordering.Infrastructure` next to the driven adapters, and `OrderingModule` is that module's composition root (what 02's `Program.cs` was for the whole application).
+
+**Data shapes at each boundary** for `POST /api/orders`:
+
+| Boundary | Type | Defined in | Why a separate type |
+|---|---|---|---|
+| Client → Ordering's HTTP adapter | JSON → `PlaceOrderRequest` | `Ordering.Infrastructure/Http` (internal) | The JSON contract, owned by the adapter |
+| Adapter → use case | `PlaceOrderCommand` | `Ordering.Application` | The use case's input, free of HTTP |
+| Ordering asks Catalog | `ICatalogQueries.GetProductsAsync(ids)` → `ProductSnapshot(Id, Name, Price)` | `Catalog.Contracts` | Catalog's `Product` row never leaves Catalog. Ordering gets plain values and turns them into its own `ProductName` and `Money` with `Of()`, so another module's data is checked at the border like any other input |
+| Use case ↔ domain | `Order` aggregate, `OrderLine`, value objects | `Ordering.Domain` | The rules |
+| Ordering tells Catalog | `OrderPlaced(OrderId, Items)` with `OrderedItem(ProductId, Quantity)` | `Ordering.Contracts` | A fact, with ids and numbers only |
+| Catalog answers | `StockReserved(OrderId)` or `StockReservationFailed(OrderId)` | `Catalog.Contracts` | The publisher owns its events |
+| Use case → adapter → client | `Order` → `OrderResponse` | `Ordering.Infrastructure/Http` | The JSON contract |
+
+If Ordering used Catalog's `Product` class, Catalog could not rename a column, add a rule or move to its own database without breaking Ordering. The snapshot and the events are the price of that freedom: a few small records.
+
+**The database schemas.** One database, `shop_modular`, with one schema per module. A **schema** is a named namespace for tables inside one PostgreSQL database (`catalog.products`, `ordering.orders`). Each module's DbContext maps only to its own schema and keeps its own migrations history table there, so each module migrates on its own. Read from the running database (`information_schema`):
+
+`catalog` (Catalog module):
+
+```mermaid
+erDiagram
+    products {
+        uuid Id PK
+        varchar_200 Name
+        varchar_50 Sku UK "unique, stored upper-case"
+        numeric_18_2 Price
+        integer Stock
+    }
+```
+
+`ordering` (Ordering module):
+
+```mermaid
+erDiagram
+    orders ||--|{ order_lines : "has"
+    orders {
+        uuid Id PK
+        uuid CustomerId
+        varchar_30 Status "enum as text"
+        varchar_30 CancellationReason "nullable"
+        numeric_18_2 Total
+        timestamptz PlacedAt
+    }
+    order_lines {
+        uuid Id PK
+        uuid OrderId FK
+        integer LineNumber
+        uuid ProductId "Catalog's product, by value: no FK"
+        varchar_200 ProductName "snapshot"
+        numeric_18_2 UnitPrice "snapshot"
+        integer Quantity
+        numeric_18_2 LineTotal
+    }
+```
+
+`payments` (Payments module):
+
+```mermaid
+erDiagram
+    payments {
+        uuid Id PK
+        uuid OrderId UK "Ordering's order, by value: no FK"
+        numeric_18_2 Amount
+        varchar_30 Status "enum as text"
+        timestamptz ProcessedAt
+    }
+```
+
+What changed from 01–03:
+
+- **Same tables and columns, now in three schemas.** Each schema also has its own `__EFMigrationsHistory`.
+- **The only foreign key is inside a module** (`order_lines → orders`). `order_lines.ProductId` and `payments.OrderId` point at other modules' rows by value only. A foreign key across schemas would be possible in one database, but it would tie two modules' tables together and could not survive the move to separate databases in 05. Version 01 already had these two columns without foreign keys (§4.2); now the reason is a module boundary.
+- **No `xmin` row version.** This version locks rows instead (§7.5).
+
+To inspect it: `scripts/create-schemas.sh 04` writes one SQL file per module, `dotnet ef migrations script --project 04-modular-monolith/src/Shop.Modular.Catalog` prints one module's SQL, `docker compose exec postgres psql -U shop -d shop_modular -c '\dn'` lists the schemas, and `-c '\d+ ordering.orders'` shows one table.
+
+### 7.3 How modules talk: contracts, events and one transaction
+
+A module offers two kinds of contract:
+
+- **A query interface** for a question that needs an answer now. Ordering cannot build an order without names and prices, so it calls [`ICatalogQueries`](../04-modular-monolith/src/Shop.Modular.Catalog.Contracts/CatalogContracts.cs), which Catalog implements with an internal class. It works like a port of 02, except that the interface belongs to the module that provides the data, not to the one that uses it.
+- **Integration events** (§3.9) for facts. Ordering publishes `OrderPlaced` and does not know who listens. Catalog consumes it and publishes its answer. The publisher owns the event type, in its `*.Contracts` project.
+
+**Domain events versus integration events.** A domain event ("this order was cancelled") stays inside one module and may carry its types. An integration event crosses modules, is part of a contract and carries only ids and plain values. In this version the Ordering use cases publish integration events directly after the aggregate decides. A larger model would let `Order` record domain events and translate them into integration events in one place. The two places that cancel an order (`CancelOrder` and `PaymentDeclinedConsumer`) would then not each need to remember to publish `OrderCancelled`.
+
+**The in-process event bus** is about ten lines ([`InProcessEventBus.cs`](../04-modular-monolith/src/Shop.Modular.BuildingBlocks.Infrastructure/Events/InProcessEventBus.cs)). `PublishAsync` resolves every `IIntegrationEventConsumer<TEvent>` registered in the current request's services and awaits them one after another. A **consumer** is the class that reacts to one kind of event. The bus has three properties. `InProcessEventBusTests` pins how consumers are called, nested and failed; `CrossModuleTransactionTests` pins the shared transaction:
+
+- Consumers run **in the publisher's request, DI scope and transaction**.
+- When `PublishAsync` returns, **every module has reacted**, including to events the consumers published themselves (Catalog's answer is consumed by Ordering before Ordering's `PublishAsync` returns).
+- A consumer's **exception reaches the publisher**, and the transaction rolls everything back.
+
+So the modules are decoupled in **code** (Ordering does not reference Catalog) but not in **time** (Ordering waits) or **failure** (a bug in Catalog fails the order).
+
+**One transaction across modules.** Each module has its own DbContext, and a DbContext normally opens its own connection and transaction. To span modules, [`AddSharedDatabase`](../04-modular-monolith/src/Shop.Modular.BuildingBlocks.Infrastructure/Persistence/DatabaseServiceCollectionExtensions.cs) registers **one database connection per request** (a scoped `DbConnection`), and `AddModuleDbContext` builds every module's DbContext on it. [`SharedTransaction.ExecuteAsync`](../04-modular-monolith/src/Shop.Modular.BuildingBlocks.Infrastructure/Persistence/SharedTransaction.cs) then:
+
+1. opens that connection and starts a transaction (`BEGIN`);
+2. tells every module's DbContext to use it (`Database.UseTransaction`), so their `SaveChanges` calls write into it instead of starting their own;
+3. runs the work and commits. Any exception skips the commit, and disposing the transaction rolls it back.
+
+Ordering's use cases start it through their `IUnitOfWork` port, because Ordering starts every flow that spans modules: place, pay, cancel. The test [`CrossModuleTransactionTests`](../04-modular-monolith/tests/Shop.Modular.ContractTests/CrossModuleTransactionTests.cs) proves it: Catalog reserves stock, Ordering's consumer then fails, and the stock is back as it was.
+
+**What would need an outbox if the bus were out of process.** Suppose `PublishAsync` sent a message to RabbitMQ instead of calling a method:
+
+- **Dual write.** Saving the order and publishing `OrderPlaced` are now two writes to two systems, and no transaction covers both. Publish before the commit, and Catalog may reserve stock for an order that is then rolled back. Publish after the commit, and a crash in between loses the event: the order stays `Pending` forever. The fix is the **transactional outbox** (§3.9): write the event into an outbox table *in the same transaction* as the order, and let a background process publish it afterwards.
+- **Duplicates.** Brokers deliver **at least once**, so Catalog could receive `OrderPlaced` twice and reserve twice. The fix is an **inbox**: consumers record message ids and skip repeats (they become idempotent).
+- **No shared fate.** Catalog's answer arrives later, in another transaction. Placing an order must answer `202 Accepted`, `Pending` becomes visible, and if payment is declined after the stock was reserved, someone must **compensate** by releasing it. That coordination is a **saga**.
+
+Version 05 does exactly that. This version needs none of it, because the transaction covers all modules. The code is still shaped for the move: the consumers are classes, the events are message-shaped records, and no module touches another's tables.
+
+### 7.4 Using it
+
+```bash
+docker compose up -d
+dotnet run --project 04-modular-monolith/src/Shop.Modular.Host     # http://localhost:5104
+dotnet test 04-modular-monolith/Shop.slnx
+```
+
+Use [`http/shop.http`](../http/shop.http) with `@baseUrl = {{modular}}`. The API is the same as before. On the first start against an empty database, EF Core logs one `fail` per module while it looks for a migrations history table that does not exist yet, then creates it. That is harmless. To watch the modules talk, add `"Shop.Modular.BuildingBlocks.Infrastructure.Events": "Debug"` under `Logging:LogLevel` in `appsettings.Development.json`. Each publish is then logged, for example `PaymentRequested` → `PaymentDeclined` → `OrderCancelled` for one declined payment.
+
+**Try this**
+
+- **Cross a boundary.** In `Shop.Modular.Payments.csproj`, add a project reference to `Shop.Modular.Catalog`. `Modules_ReferenceOtherModulesOnlyThroughContracts` fails and names it.
+- **Leak an internal.** Make any Catalog class `public`. `ModuleInternals_AreNotPublic` fails.
+- **Remove the lock.** Delete `FOR UPDATE` from [`OrderPlacedConsumer`](../04-modular-monolith/src/Shop.Modular.Catalog/Integration/CatalogIntegration.cs). `ConcurrentOrdersForLastUnits_NeverOversell` fails: 10 orders out of 10 get the last two units (§7.5 explains why).
+- **Unplug a module.** Remove `new PaymentsModule()` from `Program.cs` and pay an order. Nobody consumes `PaymentRequested`, and `PayOrder` fails with a `500` that says so, instead of answering a misleading `AwaitingPayment`.
+- **Watch one connection do the work of three modules.** Turn on `"Microsoft.EntityFrameworkCore.Database.Command": "Information"` and place an order. The SELECT, INSERT and UPDATE statements of Catalog and Ordering are logged in one sequence. The `BEGIN` and `COMMIT` themselves are not: `SharedTransaction` starts the transaction on the connection directly, not through EF Core, so EF Core has nothing to log.
+
+### 7.5 Journey of a request
+
+`POST /api/orders`, across two modules:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    box Ordering module
+        participant E as OrderEndpoints (HTTP adapter)
+        participant U as PlaceOrder (use case)
+        participant O as Order (aggregate)
+        participant R as OrderRepository + EfUnitOfWork
+        participant SC as StockReservedConsumer
+    end
+    box Building blocks
+        participant T as SharedTransaction
+        participant B as InProcessEventBus
+    end
+    box Catalog module
+        participant Q as CatalogQueries
+        participant K as OrderPlacedConsumer
+    end
+    participant PG as PostgreSQL
+    C->>E: POST /api/orders
+    E->>U: ExecuteAsync(PlaceOrderCommand)
+    U->>U: Validate
+    U->>R: InTransactionAsync
+    R->>T: ExecuteAsync
+    T->>PG: BEGIN (one connection, every module enlisted)
+    U->>Q: GetProductsAsync(ids) via ICatalogQueries
+    Q->>PG: SELECT … FROM catalog.products
+    Q-->>U: ProductSnapshot list
+    U->>O: Order.Place → Pending
+    U->>R: Add, SaveChanges
+    R->>PG: INSERT ordering.orders, order_lines
+    U->>B: PublishAsync(OrderPlaced)
+    B->>K: ConsumeAsync
+    K->>PG: SELECT … FOR UPDATE, then UPDATE catalog.products
+    K->>B: PublishAsync(StockReserved)
+    B->>SC: ConsumeAsync
+    SC->>O: ConfirmStockReserved → AwaitingPayment
+    SC->>PG: UPDATE ordering.orders
+    B-->>U: every module has reacted
+    T->>PG: COMMIT
+    U-->>E: Order
+    E-->>C: 201 Created + OrderResponse
+```
+
+**Reception (Ordering's HTTP adapter)**
+
+1. The framework part is §4.4. The Host mapped `POST /api/orders` to the route that `OrderingModule.MapEndpoints` registered in [`OrderEndpoints`](../04-modular-monolith/src/Shop.Modular.Ordering.Infrastructure/Http/OrderEndpoints.cs). The adapter turns the `PlaceOrderRequest` into a `PlaceOrderCommand` (a `null` line becomes an empty one, which validation then reports) and calls the use case.
+   *Boundary adapter → Application: call and dependency both point inwards, as in 02.*
+
+**Processing (Ordering, then Catalog, then Ordering again, in one transaction)**
+
+2. [`PlaceOrder.Validate`](../04-modular-monolith/src/Shop.Modular.Ordering.Application/UseCases/PlaceOrder.cs) checks the input, with the same rules and field names as 02.
+3. `unitOfWork.InTransactionAsync` → [`EfUnitOfWork`](../04-modular-monolith/src/Shop.Modular.Ordering.Infrastructure/Persistence/OrderRepository.cs) → `SharedTransaction.ExecuteAsync`: `BEGIN` on the request's connection, with the DbContexts of all three modules enlisted. **The transaction starts here.**
+   *Boundary Application → Infrastructure through the `IUnitOfWork` port: the call goes outwards, the dependency points inwards.*
+4. `catalog.GetProductsAsync(ids)` reaches Catalog's internal `CatalogQueries`, which projects `ProductSnapshot`s from `catalog.products`. Unknown ids become a `ValidationException` on `lines[i].productId`.
+   *Boundary Ordering → Catalog: the call goes into Catalog, but the dependency stops at `Catalog.Contracts`. DI plugs in the implementation.*
+5. `Order.Place` builds the aggregate in `Pending`, copying name and price from the snapshots with `Of()`. `SaveChanges` inserts the order and its lines. They exist only inside the transaction: no other request can see them.
+6. `bus.PublishAsync(new OrderPlaced(…))` runs Catalog's [`OrderPlacedConsumer`](../04-modular-monolith/src/Shop.Modular.Catalog/Integration/CatalogIntegration.cs). It **locks** the order's products with `SELECT … FOR UPDATE`, in id order. A concurrent order for the same product waits here until this transaction ends. It checks that every line has enough stock, decrements all of them and saves, then publishes `StockReserved`. If any line is short, it changes nothing and publishes `StockReservationFailed`. **Catalog's rule (all lines or none) runs in Catalog.**
+   *Boundary Ordering → Catalog through the bus: Ordering does not reference Catalog at all. Catalog depends on `Ordering.Contracts`, the event's owner.*
+7. The bus hands `StockReserved` to Ordering's [`StockReservedConsumer`](../04-modular-monolith/src/Shop.Modular.Ordering.Application/IntegrationEvents/OrderingConsumers.cs). It loads the order (the same tracked object, since it is the same request and DbContext) and calls `ConfirmStockReserved()`: `Pending → AwaitingPayment`. **The order's rule runs in the order.** `StockReservationFailedConsumer` would call `RejectForLackOfStock()` instead.
+8. `PublishAsync` returns. `PlaceOrder` reads the order again; if it were still `Pending`, nobody answered, and it throws rather than report a half-made order.
+9. `COMMIT`. The order, its lines, the stock change and the final status become visible together. The waiting concurrent order now reads the reduced stock.
+
+**Response (Ordering's HTTP adapter)**
+
+10. `OrderResponse.From(order)` and `201 Created`. As in 01–03, the response holds the final state.
+
+**Paying** follows the same pattern, through Payments:
+
+1. `POST /api/orders/{id}/pay` → [`PayOrder`](../04-modular-monolith/src/Shop.Modular.Ordering.Application/UseCases/OrderUseCases.cs).
+2. `InTransactionAsync` starts the shared transaction.
+3. `orders.GetForUpdateAsync(id)` **locks the order row** (`SELECT 1 FROM ordering.orders … FOR UPDATE`, in [`OrderRepository`](../04-modular-monolith/src/Shop.Modular.Ordering.Infrastructure/Persistence/OrderRepository.cs)) and loads it.
+4. `order.EnsureCanBePaid()`: anything but `AwaitingPayment` is a `409` before any money is asked for.
+5. `PublishAsync(PaymentRequested)` → Payments' [`ProcessPayment`](../04-modular-monolith/src/Shop.Modular.Payments/Features/ProcessPayment.cs) slice charges the gateway (the order id is the idempotency key), inserts the payment and publishes `PaymentSucceeded` or `PaymentDeclined`.
+6. Ordering consumes the answer: `MarkPaid()`, or `DeclinePayment()` followed by `OrderCancelled`, which Catalog's `OrderCancelledConsumer` consumes by giving the units back.
+7. `COMMIT`, then `200 OK` with the order.
+
+Step 3 closes the race that versions 02 and 03 could only document (§5.5): a cancel committing between the charge and the save. There, the order could end `Cancelled` with the money taken and no payment recorded. Here a second pay or a cancel waits at the lock, then sees `Paid` (or `Cancelled`) and is refused before Payments is asked for money. **One window remains, and no database can close it:** the charge is a call to an external system, so it is not part of the transaction. If the `COMMIT` fails after an approved charge (a dropped connection, a crash), the rows roll back but the money has moved. The idempotency key makes a retry of the same pay safe; recovering the lost charge needs a refund or a reconciliation with the provider. This is the dual write of §7.3 in miniature, already present in one process: rolling back a transaction undoes database rows, never calls to the outside world.
+
+**Three ways to protect the stock, three versions.** Every version must pass the "ten orders, two units" test, and each does it differently:
+
+| | How | Who waits | Cost |
+|---|---|---|---|
+| 01 | **Conditional update**: `UPDATE … SET stock = stock - n WHERE stock >= n` | Nobody: the database checks and writes in one statement | The rule lives in SQL |
+| 02, 03 | **Optimistic concurrency**: read, decide in the domain, save `WHERE xmin = <the version read>`; on a conflict, retry | Nobody waits; losers redo their work | Retries under contention |
+| 04 | **Pessimistic locking**: `SELECT … FOR UPDATE` first, then decide and save | Later requests queue on the row lock | Locks are held until the commit, so keep transactions short; lock rows in a fixed order to avoid deadlocks |
+
+Without the lock, Catalog's code is a classic **lost update**. Ten requests read `Stock = 2` at the same time, each decides "enough", each writes `Stock = 1`, and the last write wins: ten orders reserved, one unit gone. The "Try this" experiment shows exactly that. The lock turns "read, decide, write" into a queue.
+
+**The error path**
+
+- **`400`.** `PlaceOrder.Validate`, Catalog's `ProductRules` and Payments' `GetPayment` throw the shared `ValidationException` (from `BuildingBlocks`). The shared handler in BuildingBlocks.Infrastructure maps it, the same way for every module.
+- **`404`.** The shared `NotFoundException`, same handler.
+- **`409`.** Two sources. The `Order` aggregate throws `BusinessRuleViolationException`, a type of Ordering's domain, so Ordering registers its own handler, [`OrderingExceptionHandler`](../04-modular-monolith/src/Shop.Modular.Ordering.Infrastructure/Http/OrderingExceptionHandler.cs), and the Host never learns that type exists. Catalog and Payments throw the shared `ConflictException` (duplicate SKU, stock out of range, a second payment).
+- **A failure inside another module** travels back through the bus to the use case that published. The transaction rolls back, and the client gets that module's error. A bug in Catalog's consumer fails the order, and nothing is saved in any module. (Calls to the outside world, such as the payment charge, are the exception: see "Paying" above.) In one process, modules share their fate.
+
+**Where would I change…**
+
+| Change | Files touched |
+|---|---|
+| Add a field to products (`Description`) | Catalog only: `Product`, `CatalogDbContext` + a migration, the requests and `ProductResponse`, `ProductRules`. If Ordering needs it too, `ProductSnapshot` in `Catalog.Contracts`: a contract change, agreed between modules |
+| Change an order rule (max 500 units per line) | `Quantity.Max` in `Ordering.Domain` |
+| Change how stock is reserved (allow backorders) | `OrderPlacedConsumer` in Catalog. Ordering does not know how stock works, only the answer |
+| Add an endpoint | The owning module only: `ProductEndpoints` (Catalog), a use case + `OrderEndpoints` (Ordering), a new slice file (Payments) |
+| Switch the database | `BuildingBlocks.Infrastructure` (connection, design-time options, `IsUniqueViolation`), the two `FOR UPDATE` statements, each module's migrations |
+| Add a module (Shipping) | New projects and its contracts, one line in `Program.cs`, consumers for the events it needs. Existing modules change only if they must publish something new |
+| Move Payments to its own service | Payments and its contracts become a service, the bus becomes a broker, and the shared transaction is gone: outbox, inbox, saga (chapter 8) |
+
+### 7.6 Rules
+
+Two kinds of enforcement work together. The **compiler** enforces project references (a module cannot use what it does not reference) and `internal` (it cannot use what is not public, even with a reference). The **architecture tests** ([`ModuleRulesTests.cs`](../04-modular-monolith/tests/Shop.Modular.ArchitectureTests/ModuleRulesTests.cs)) guard those settings, and check what the compiler cannot see: schemas, where events live, what the compiled code uses.
+
+| Test | Rule | Why |
+|---|---|---|
+| `Modules_ReferenceOtherModulesOnlyThroughContracts` | A module's projects reference only their own module, `*.Contracts` and the building blocks (project files and compiled references) | The rule that keeps modules separable |
+| `Host_ReferencesOnlyModuleEntryPointsAndBuildingBlocks` | The Host references each module's entry project (the one with its `IModule`) and the building blocks, nothing else | The Host composes modules; it must not call into them |
+| `BuildingBlocksInfrastructure_ReferencesNoModule` | The shared plumbing references no module, not even a contract | Shared code written for one module becomes a shared kernel for all (§7.8) |
+| `Contracts_DependOnNothingButBuildingBlocks` | Contracts reference only the base library and BuildingBlocks | Every consumer inherits a contract's dependencies |
+| `BuildingBlocks_DependOnNothing` | BuildingBlocks references only the base library | It is referenced by every contract and by Ordering's inner layers |
+| `OrderingDomain_DependsOnNothing` | 02's first rule, inside the Ordering module | The domain is the stable centre |
+| `OrderingApplication_DoesNotUseEfCoreOrAspNetCore` | 02's rule, read from the IL | Use cases stay testable with fakes |
+| `OrderingApplication_DoesNotReferenceInfrastructure` | No `*.Infrastructure` assembly | Adapters depend on the application, not the reverse |
+| `ModuleInternals_AreNotPublic` | Catalog, Payments and Ordering.Infrastructure export only their `IModule` (EF Core's generated migrations aside) | `internal` makes the boundary a compiler error |
+| `EachModule_MapsOnlyToItsOwnSchema` | Every table in a module's EF Core model is in the schema named after the module | Data is private like code |
+| `IntegrationEvents_LiveInContracts` | Every `IIntegrationEvent` is declared in a `*.Contracts` project | An event is a promise to other modules |
+| `OnlyOrderingInfrastructure_RehydratesValueObjects` | 02's rule | Skipping validation is safe only for stored data |
+
+The modules are not listed in the tests: they are read from the folders in `src/`, so a fourth module (`Shop.Modular.Shipping`) is checked from its first commit. Ordering's Domain and Application must be `public`, because its Infrastructure project uses them. The reference rules are what keep other modules out of them. One gap is accepted: `EachModule_MapsOnlyToItsOwnSchema` reads the EF Core model, so raw SQL (the two `FOR UPDATE` statements) is not checked and relies on review. A stricter setup gives each module its own database role, with rights on its own schema only. Payments' two slices have no rule between them, and Catalog has no layers to protect: rules are worth writing where a mistake is likely and expensive.
+
+Following §6.6's lesson, every rule was broken on purpose and seen to fail, including the IL-based ones inside an async lambda. Two experiments on behaviour were also run once: committing even after an exception made `CrossModuleTransactionTests` fail (stock 3 instead of 5), removing `FOR UPDATE` made the concurrency contract test fail (10 orders instead of 2), and `RepeatedProductInOneEvent_IsReservedAsItsTotal` failed against Catalog's first version, which checked each line on its own instead of each product's total (stock -1).
+
+### 7.7 What changed from version 03
+
+The four versions so far:
+
+| | 01 Layered | 02 Clean | 03 Vertical Slice | 04 Modular monolith |
+|---|---|---|---|---|
+| Organised by | Technical layer | Technical layer, inverted | Use case | **Business capability (module)**, then each module its own way |
+| Projects in `src/` | 3 | 4 | 1 | 11 (3 modules × code + contracts, building blocks, Host) |
+| Where the rules are | Services | Aggregates, `OrderFulfillment` | Same domain as 02 | `Order` aggregate in Ordering; plain rules in Catalog; none needed in Payments |
+| Cross-context work | One service calls another | One domain service, one transaction | Same as 02 | **Events between modules**, one shared transaction |
+| Stock concurrency | Conditional `UPDATE` | Optimistic + retry | Optimistic + retry | **Pessimistic** `FOR UPDATE` |
+| Database | One schema | One schema | One schema | **One schema per module**, no cross-module foreign keys |
+| Boundaries enforced by | References + tests | References + `internal` + tests | Tests | References + `internal` + tests, **per module** |
+| Unit tests without a database | 12 | 75 | 62 | 81 |
+| C# lines in `src/` (no migrations) | about 1,010 | about 1,600 | about 1,500 | about 1,890 in 40 files (Ordering 910, Catalog 370, building blocks 320, Payments 200, contracts 50, Host 44) |
+
+What moved where:
+
+- **02/03's single domain was split by owner.** `Product` went to Catalog, where it became a plain row with rules in functions: a product has field checks but no lifecycle, so CRUD is enough. `Order` went to Ordering, unchanged except for the new `Pending` state. `Payment` went to Payments as a record.
+- **`OrderFulfillment` disappeared.** In 02 that domain service reserved stock on `Product` objects while placing an `Order`. Now no single module may touch both, so its job became a conversation: `OrderPlaced` → `StockReserved`. That is DDD's "one transaction per aggregate" guideline (§3.7) half-applied. Each module changes only its own aggregates, but the steps still share one database transaction.
+- **Concurrency changed strategy**, from optimistic retries to pessimistic locks. With one transaction spanning a whole conversation, retrying would mean redoing the work of three modules. Queuing on a lock is simpler, and it also closed the pay-versus-cancel race (not the window between an external charge and the commit, §7.5).
+- **The rule "who may know whom" moved up a level.** In 02 it was about layers; here it is mostly about modules, and inside Ordering the layers still apply.
+
+### 7.8 Trade-offs
+
+**Benefits**
+
+- Boundaries that hold. The compiler and the tests stop accidental coupling, so the system stays modular as it grows, and a team can own a module.
+- The right style per area: Catalog stays simple, and only Ordering pays for a rich model.
+- Still one deployable and one database. Operations stay simple, a request is one stack trace to debug, and a transaction can span modules.
+- A cheap path to microservices if it is ever needed. The modules already talk as services would, so extracting one is mostly mechanical (chapter 8).
+
+**Costs**
+
+- More structure: eleven projects instead of one, a module interface, a bus, a shared transaction, contracts.
+- A boundary forbids shortcuts. There are no joins across modules, data is copied by value (snapshots), and a contract change must be agreed between modules.
+- The in-process bus hides coupling in time and failure. A slow consumer slows the publisher, a failing one fails it, and every consumer holds the transaction's locks for the whole conversation. The fake payment gateway answers instantly; a real provider that takes two seconds would hold the order's row lock for two seconds on every payment.
+- One database is still shared. A heavy query in one module slows the others, migrations are coordinated per release, and the whole application scales as one unit.
+- BuildingBlocks needs discipline. Shared projects attract "just one more" helper. Once business logic lands there, it becomes a **shared kernel** that every module depends on, and changing it means changing every module.
+
+**When to use it.** A new system with several business areas. Most products should start here rather than with microservices: the boundaries can be found and corrected while moving them costs a refactoring, not a migration between services. It is also a good target when cleaning up a big ball of mud.
+
+**When NOT to use it.** A small application with one bounded context (layered or slices are enough). Parts that already need independent deployment, scaling or technology (chapter 8). Teams that cannot release together.
+
+### 7.9 Interview questions
+
+1. **What is a modular monolith? How is it different from a monolith and from microservices?**
+   One deployable, split inside into modules with enforced boundaries, each owning its code and data and exposing a contract. A plain monolith has no enforced boundaries. Microservices have the same boundaries but put networks between them and deploy them separately.
+2. **How do you enforce module boundaries in .NET?**
+   A project per module (or per module layer), `internal` types, a public contracts project, project references only to contracts, a schema per module, and architecture tests that fail when any of those is broken.
+3. **How should modules communicate?**
+   Through their contracts only: a query interface when an answer is needed now, integration events for facts. Never through another module's classes or tables. Events carry ids and plain values.
+4. **What changes if the in-process bus becomes a message broker?**
+   Saving and publishing become a dual write: use a transactional outbox. Delivery is at least once: make consumers idempotent with an inbox. Answers arrive later: return `202`, expose intermediate states, and coordinate with a saga that compensates on failure.
+5. **Should modules share a database?**
+   Sharing the server is fine, and so is a transaction while it is one database. Sharing tables is not. Each module owns a schema, nothing reads another module's tables, and there are no foreign keys across modules. Otherwise the database couples what the code separated.
+6. **Optimistic or pessimistic concurrency?**
+   Optimistic (version check, retry) when conflicts are rare and the work is cheap to redo. Pessimistic (lock first) when conflicts are frequent, or redoing the work is expensive or has side effects such as charging money. Keep locked transactions short and lock in a fixed order.
+
+---
+
 ## Glossary
 
 Terms are added as each chapter introduces them. The section where a term is explained is in brackets.
@@ -1557,8 +1993,10 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Aspire**: Microsoft's toolkit (formerly ".NET Aspire") to run, wire and observe a distributed application locally. The AppHost describes the system; the dashboard shows logs and traces. [§1.4]
 - **Assembly**: the compiled output of a project (`.dll` / `.exe`). [§2.2]
 - **Assembly fixture**: an xUnit v3 object created once for all the tests in an assembly. [§2.8]
+- **At-least-once delivery**: what message brokers guarantee: a message is never lost, but may arrive more than once, so consumers must be idempotent. [§7.3]
 - **Big ball of mud**: a system with no visible structure, where everything depends on everything. [§4.8]
 - **Bounded context**: a boundary inside which one domain model and one language apply. [§3.7]
+- **Building blocks**: the small shared projects every module of a modular monolith uses (event interfaces, the bus, shared errors). Kept free of business logic, or they become a shared kernel. [§7.2]
 - **Business layer**: in a layered architecture, the layer with the rules and the transactions, between presentation and data access. [§4.1]
 - **Call direction / dependency direction**: who calls whom at runtime, versus whose code references whose at compile time. [§3.6]
 - **Central package management**: all NuGet versions in one `Directory.Packages.props`. [§2.5]
@@ -1569,12 +2007,14 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Cohesion**: how much the things inside one part belong together. High is good. [§3.5]
 - **Command**: a request to change state (`PlaceOrder`). [§3.8]
 - **Compensating action**: a step that undoes the effect of an earlier step when a later one fails (release stock after a declined payment). [§3.10]
-- **Composition root**: the one place, at startup, where the application wires its classes together (`Program.cs` here). [§4.2]
+- **Composition root**: the one place, at startup, where the application wires its classes together (`Program.cs` here; in version 04 also each module's `IModule`). [§4.2, §7.2]
 - **Concurrency**: several requests working on the same data at the same time. [§3.10]
 - **Conditional update**: an `UPDATE` that only applies if a condition still holds (`WHERE stock >= 1`), so a race cannot oversell. [§3.10]
+- **Consumer (of an event)**: the class that reacts to one kind of event or message (`OrderPlacedConsumer`). [§7.3]
 - **Container / image**: an isolated running process (Docker) / the package it starts from. [§1.3]
 - **Context map**: how bounded contexts relate and communicate. [§3.7]
 - **Contract test**: a test of the public API over HTTP only; here, shared by all versions. [§2.8]
+- **Contracts project**: a module's public surface in its own project (`Shop.Modular.Catalog.Contracts`): the events it publishes and the queries it answers. Other modules reference it, never the module itself. [§7.2]
 - **Coupling**: how much one part depends on another. Low is good. [§3.5]
 - **CQRS**: Command Query Responsibility Segregation, handling changes and reads separately. [§3.8]
 - **CRUD**: Create, Read, Update, Delete; an application that mostly stores and shows data. [§3.7]
@@ -1593,6 +2033,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Domain service**: a business operation that does not naturally belong to one entity. [§3.7]
 - **Driving / driven adapter**: in Hexagonal Architecture, a driving (primary) adapter calls into the application (HTTP endpoints, tests); a driven (secondary) adapter is called by it through a port (repositories, gateways). [§5.2]
 - **DTO**: Data Transfer Object, a plain type that only carries data across a boundary (a request or response record). [§4.2]
+- **Dual write**: writing to two systems (a database and a message broker) with no transaction covering both, so a crash in between leaves them disagreeing. Solved with an outbox. [§7.3]
 - **EF Core / EF Core entity**: Entity Framework Core, the .NET object-relational mapper that maps classes to tables. An EF Core entity is a class mapped to a table; it is not the same idea as a DDD entity. [§4.2]
 - **Endpoint**: in ASP.NET Core, the code that handles one method and path (`POST /api/orders`). [§4.4]
 - **Endpoint discovery**: finding every endpoint class at startup by reflection and mapping it, so no central list of routes exists (`IEndpoint` in version 03). [§6.2]
@@ -1610,16 +2051,18 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Idempotency key**: a unique value sent with a request (such as the order id with a charge) so the receiver can recognise a repeat and do the work only once. [§4.5]
 - **Idempotent**: doing it twice has the same effect as doing it once. [§3.9]
 - **IL (Intermediate Language)**: what C# compiles to; the code inside a `.dll`. Architecture tests can read it to see what code really calls. [§6.6]
+- **In-process event bus**: an event bus that calls the consumers directly, in the same process, request and transaction as the publisher. Decouples code, not time or failure. [§7.3]
 - **Inbox**: a table of already-handled message ids, used to ignore duplicate deliveries. [§3.9]
 - **Input port**: an interface through which a driving adapter calls a use case (`IPlaceOrder`). Here the use-case class itself plays that role. [§5.2]
 - **Input validation**: checking that a request is well formed and reporting which field is wrong; done at the application boundary. Compare invariant. [§5.5]
-- **Integration event**: an event published to other bounded contexts, part of a context's public contract. [§3.9]
+- **Integration event**: an event published to other bounded contexts, part of a context's public contract; carries ids and plain values only. [§3.9, §7.3]
 - **Invariant**: a rule that must always hold for an object, whoever changes it (an amount has at most two decimals). Enforced by the domain itself, unlike input validation. [§5.5]
 - **Isolation level**: how much concurrent transactions see of each other. PostgreSQL defaults to READ COMMITTED: each statement sees the data committed before it started. [§4.5]
 - **Kestrel**: the web server built into ASP.NET Core. [§4.4]
 - **Lasagna code**: so many pass-through layers that each one adds code but no decision. [§4.8]
 - **Layer**: a group of code with one kind of responsibility, with rules about which layers it may use. [§3.2]
 - **Local tool manifest**: `.config/dotnet-tools.json`, the list of .NET tools (such as `dotnet-ef`) a repo uses; `dotnet tool restore` fetches them for that repo only. [§1.5]
+- **Lost update**: two requests read the same value, both change it, and the second write silently overwrites the first. [§7.5]
 - **Mediator (pattern / library)**: an object that receives a request and dispatches it to its handler, often with a pipeline of behaviours (MediatR is the best-known .NET library). Not used here. [§6.2]
 - **Mermaid**: a text format for diagrams, rendered by GitHub and by VS Code with an extension. [§1.2]
 - **Message**: a piece of data sent from one part of a system to another, often through a broker. [§3.9]
@@ -1629,8 +2072,8 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Middleware**: a component of the ASP.NET Core request pipeline; each one can act before and after the next. [§4.4]
 - **Migration (EF Core)**: a versioned, generated description of a database schema change. Applied migrations are recorded in the table `__EFMigrationsHistory`. [§1.5, §1.6]
 - **Model binding**: the framework step that turns route values, query strings and the JSON body into the parameters of an endpoint. [§4.4]
-- **Modular monolith**: one deployable split inside into modules with strict boundaries. [§3.2]
-- **Module**: a part of an application with a clear boundary and a small public surface. [§3.2]
+- **Modular monolith**: one deployable split inside into modules with strict boundaries: each module owns its code, its data and a public contract. [§3.2, §7.1]
+- **Module**: a part of an application with a clear boundary and a small public surface. In version 04: Catalog, Ordering and Payments. [§3.2, §7.1]
 - **Mono.Cecil**: a .NET library that reads and writes compiled assemblies (their IL); ArchUnitNET is built on it, and the architecture tests use it directly to see inside lambdas. [§6.6]
 - **Monolith**: an application deployed as a single unit. [§3.2]
 - **MSBuild**: the .NET build engine that reads `.csproj` and `.props` files. [§1.1]
@@ -1643,6 +2086,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Owned entity (EF Core)**: an entity stored and loaded only together with its owner, like order lines with their order. [§5.2]
 - **Package-by-feature**: the Java name for organising packages by feature instead of by layer; the idea behind vertical slices. [§6.1]
 - **Persistence ignorance**: domain classes that know nothing about how they are stored (no ORM attributes, no database types). [§5.8]
+- **Pessimistic locking**: locking the rows first (`SELECT … FOR UPDATE`) so concurrent requests wait their turn, instead of detecting conflicts afterwards (optimistic). [§7.5]
 - **Port**: in Hexagonal Architecture, an interface defined by the application for something it needs or offers. [§3.4]
 - **PostgreSQL**: the open-source relational database used by every version. [§1.3]
 - **Presentation layer**: the top layer of a layered architecture; it talks to the outside world (HTTP, UI). [§4.1]
@@ -1660,15 +2104,18 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Rich domain model**: entities and value objects with behaviour that protects their own rules; the opposite of an anemic model. [§5.1]
 - **Roslyn**: the C# compiler. [§1.1]
 - **Routing**: the framework step that picks the endpoint matching a request method and path. [§4.4]
-- **Row lock**: a lock the database takes on a row while a transaction updates it; other writers of that row wait until it commits. [§4.5]
+- **Row lock**: a lock the database takes on a row while a transaction updates it (or reads it with `SELECT … FOR UPDATE`); other writers of that row wait until it commits. [§4.5, §7.5]
 - **Row version**: a value that changes on every update of a row; comparing it at save time detects that someone else changed the row (`xmin` here). [§4.5]
 - **Runtime**: the part of .NET that runs compiled programs. [§1.1]
 - **Saga**: a multi-step process across services, made of local transactions, with compensating actions on failure. [§3.10]
+- **Schema (database)**: a named namespace for tables inside one database (`catalog.products`). Version 04 gives each module its own. [§7.2]
 - **Scope (dependency injection)**: a lifetime for services; ASP.NET Core creates one per request, so scoped services are shared inside that request only. [§4.4]
 - **SDK**: Software Development Kit; for .NET, the runtime + C# compiler + `dotnet` CLI + MSBuild. [§1.1]
+- **`SELECT … FOR UPDATE`**: a SQL read that also locks the rows it returns until the transaction ends. [§7.5]
 - **Serverless**: deploying individual functions that the cloud runs on demand. [§3.2]
 - **Service (layered architecture)**: a class in the business layer that groups the operations of one area (`OrderService`). [§4.2]
 - **Shadow property**: a property EF Core maps to a column although the class has no such property (the row version here). [§5.2]
+- **Shared kernel**: a part of the model that several bounded contexts share and must change together. Sometimes deliberate, often an accident of a "common" project that grew. [§7.8]
 - **SKU**: Stock Keeping Unit, the shop's own unique product code. [§3.11]
 - **Snapshot (order line)**: a copy of a value taken at a moment in time, such as the product name and price when an order is placed. [§4.5]
 - **SOA**: Service-Oriented Architecture, large shared services often joined by an enterprise service bus; the ancestor of microservices. [§3.2]

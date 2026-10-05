@@ -11,6 +11,7 @@
 #   ./scripts/create-schemas.ps1 02-clean-hexagonal
 # Output: artifacts/sql/<version>.sql (git-ignored). Apply one with, for example:
 #   Get-Content artifacts/sql/02-clean-hexagonal.sql | docker compose exec -T postgres psql -U shop -d shop_clean
+# 04 writes one file per module schema (04-modular-monolith-catalog.sql, …); apply all three to shop_modular.
 param([string]$Only = "")
 
 $ErrorActionPreference = "Stop"
@@ -21,7 +22,10 @@ Set-Location (Join-Path $PSScriptRoot "..")
 $targets = @(
     @{ Name = "01-layered"; Project = "01-layered/src/Shop.Layered.Data"; Context = "" },
     @{ Name = "02-clean-hexagonal"; Project = "02-clean-hexagonal/src/Shop.Clean.Infrastructure"; Context = "" },
-    @{ Name = "03-vertical-slice"; Project = "03-vertical-slice/src/Shop.Slice.Api"; Context = "" }
+    @{ Name = "03-vertical-slice"; Project = "03-vertical-slice/src/Shop.Slice.Api"; Context = "" },
+    @{ Name = "04-modular-monolith-catalog"; Project = "04-modular-monolith/src/Shop.Modular.Catalog"; Context = "" },
+    @{ Name = "04-modular-monolith-ordering"; Project = "04-modular-monolith/src/Shop.Modular.Ordering.Infrastructure"; Context = "" },
+    @{ Name = "04-modular-monolith-payments"; Project = "04-modular-monolith/src/Shop.Modular.Payments"; Context = "" }
 )
 
 $out = "artifacts/sql"
