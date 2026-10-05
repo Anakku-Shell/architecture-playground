@@ -1,0 +1,27 @@
+# Local PostgreSQL for versions 01-04 (version 05 gets its databases from Aspire).
+# Dev-only credentials. Host port 5433 avoids clashing with other local PostgreSQL instances.
+# Guide: chapter 1, "Everyday commands".
+name: architecture-playground
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop
+    ports:
+      - "5433:5432"
+    volumes:
+      - shop-pgdata:/var/lib/postgresql/data
+      # Runs only the first time the volume is created: one database per version.
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      # TCP + the last database of init.sql: during first start-up the image runs a temporary
+      # server on the unix socket only, so this turns healthy once init.sql has finished.
+      test: ["CMD-SHELL", "pg_isready -U shop -h 127.0.0.1 -d shop_modular"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  shop-pgdata:

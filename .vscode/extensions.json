@@ -1,0 +1,9 @@
+{
+  "recommendations": [
+    "ms-dotnettools.csdevkit",
+    "humao.rest-client",
+    "editorconfig.editorconfig",
+    "ms-azuretools.vscode-containers",
+    "bierner.markdown-mermaid"
+  ]
+}

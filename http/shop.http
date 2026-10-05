@@ -1,0 +1,147 @@
+# Sample requests for every version of the shop (VS Code "REST Client" extension).
+# The API is the same in all versions: change @baseUrl to switch between them.
+# Click "Send Request" above each request. Responses of named requests (# @name) feed the next ones.
+
+@layered = http://localhost:5101
+@clean   = http://localhost:5102
+@slice   = http://localhost:5103
+@modular = http://localhost:5104
+@micro   = http://localhost:5105
+
+@baseUrl = {{layered}}
+
+### ---------------------------------------------------------------------------------------------
+### Catalog
+### ---------------------------------------------------------------------------------------------
+
+# SKUs are unique: sending this twice answers 409 Conflict. Change the SKU to create another product.
+# @name createMug
+POST {{baseUrl}}/api/products
+Content-Type: application/json
+
+{
+  "name": "Coffee mug",
+  "sku": "mug-001",
+  "price": 12.50,
+  "initialStock": 10
+}
+
+###
+
+@mugId = {{createMug.response.body.$.id}}
+
+GET {{baseUrl}}/api/products
+
+###
+
+GET {{baseUrl}}/api/products/{{mugId}}
+
+###
+
+PUT {{baseUrl}}/api/products/{{mugId}}/price
+Content-Type: application/json
+
+{ "price": 14.00 }
+
+###
+
+# Add 5 units (a negative quantity removes units; stock can never go below 0 → 409)
+POST {{baseUrl}}/api/products/{{mugId}}/stock-adjustments
+Content-Type: application/json
+
+{ "quantity": 5 }
+
+###
+
+# Invalid: price with three decimals → 400 ProblemDetails with "errors"
+POST {{baseUrl}}/api/products
+Content-Type: application/json
+
+{ "name": "Pen", "sku": "pen-001", "price": 1.999, "initialStock": 1 }
+
+### ---------------------------------------------------------------------------------------------
+### Happy path: place an order and pay it
+### ---------------------------------------------------------------------------------------------
+
+# @name placeOrder
+POST {{baseUrl}}/api/orders
+Content-Type: application/json
+
+{
+  "customerId": "6f1c2b0e-0d7a-4a7e-9a35-1c2d3e4f5a6b",
+  "lines": [ { "productId": "{{mugId}}", "quantity": 2 } ]
+}
+
+###
+
+@orderId = {{placeOrder.response.body.$.id}}
+
+# 01-04: already AwaitingPayment. 05: Pending first, AwaitingPayment a moment later.
+GET {{baseUrl}}/api/orders/{{orderId}}
+
+###
+
+# 05: wait until the order is AwaitingPayment (GET above), otherwise this answers 409.
+POST {{baseUrl}}/api/orders/{{orderId}}/pay
+
+###
+
+GET {{baseUrl}}/api/payments?orderId={{orderId}}
+
+### ---------------------------------------------------------------------------------------------
+### A declined payment: totals above 1000.00 are declined, the order is cancelled, stock comes back
+### ---------------------------------------------------------------------------------------------
+
+# SKUs are unique: change the SKU to send this again.
+# @name createLaptop
+POST {{baseUrl}}/api/products
+Content-Type: application/json
+
+{ "name": "Laptop", "sku": "laptop-001", "price": 1299.00, "initialStock": 3 }
+
+###
+
+@laptopId = {{createLaptop.response.body.$.id}}
+
+# @name placeLaptopOrder
+POST {{baseUrl}}/api/orders
+Content-Type: application/json
+
+{
+  "customerId": "6f1c2b0e-0d7a-4a7e-9a35-1c2d3e4f5a6b",
+  "lines": [ { "productId": "{{laptopId}}", "quantity": 1 } ]
+}
+
+###
+
+@laptopOrderId = {{placeLaptopOrder.response.body.$.id}}
+
+# 05: wait until the order is AwaitingPayment, otherwise this answers 409.
+POST {{baseUrl}}/api/orders/{{laptopOrderId}}/pay
+
+###
+
+# Cancelled, cancellationReason = PaymentDeclined
+GET {{baseUrl}}/api/orders/{{laptopOrderId}}
+
+###
+
+# Stock is back to 3
+GET {{baseUrl}}/api/products/{{laptopId}}
+
+### ---------------------------------------------------------------------------------------------
+### Cancelling an order
+### ---------------------------------------------------------------------------------------------
+
+# @name placeToCancel
+POST {{baseUrl}}/api/orders
+Content-Type: application/json
+
+{
+  "customerId": "6f1c2b0e-0d7a-4a7e-9a35-1c2d3e4f5a6b",
+  "lines": [ { "productId": "{{mugId}}", "quantity": 1 } ]
+}
+
+###
+
+POST {{baseUrl}}/api/orders/{{placeToCancel.response.body.$.id}}/cancel

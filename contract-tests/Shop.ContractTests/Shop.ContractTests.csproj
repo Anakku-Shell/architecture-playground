@@ -1,0 +1,14 @@
+<!--
+  The shared API contract suite. A plain class library (not a test project): it holds abstract
+  test classes, and each version's Shop.<V>.ContractTests project inherits them and supplies
+  an HttpClient for its own API. xUnit runs inherited [Fact]s on the concrete classes.
+  Guide: chapter 2, "The shared contract suite".
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3.extensibility.core" />
+    <PackageReference Include="xunit.v3.assert" />
+  </ItemGroup>
+
+</Project>
