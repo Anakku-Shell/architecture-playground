@@ -1,0 +1,11 @@
+<!--
+  Presentation layer (top tier): HTTP endpoints. It references only the Business layer.
+  Data is still reachable through Business (a transitive reference): see Guide §4.6.
+-->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Layered.Business\Shop.Layered.Business.csproj" />
+  </ItemGroup>
+
+</Project>

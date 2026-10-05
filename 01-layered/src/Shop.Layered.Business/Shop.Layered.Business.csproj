@@ -1,0 +1,11 @@
+<!--
+  Business layer (middle tier): the services with the shop's rules. It references the Data
+  layer and works with its EF entities and DbContext directly. Guide: §4.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Layered.Data\Shop.Layered.Data.csproj" />
+  </ItemGroup>
+
+</Project>

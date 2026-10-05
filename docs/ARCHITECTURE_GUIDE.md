@@ -35,7 +35,16 @@ This guide goes with the code. It explains software architecture from zero. Ever
    9. [Primer: events and messaging](#39-primer-events-and-messaging)
    10. [Primer: transactions and consistency](#310-primer-transactions-and-consistency)
    11. [The shop we build five times](#311-the-shop-we-build-five-times)
-4. Layered (N-tier) — *coming in phase 01*
+4. [Layered (N-tier)](#4-layered-n-tier)
+   1. [The idea](#41-the-idea)
+   2. [Layers and their responsibilities](#42-layers-and-their-responsibilities)
+   3. [Using it](#43-using-it)
+   4. [Before our code runs: what ASP.NET Core does](#44-before-our-code-runs-what-aspnet-core-does)
+   5. [Journey of a request](#45-journey-of-a-request)
+   6. [Rules](#46-rules)
+   7. [What changed from the previous version](#47-what-changed-from-the-previous-version)
+   8. [Trade-offs](#48-trade-offs)
+   9. [Interview questions](#49-interview-questions)
 5. Clean / Hexagonal — *coming in phase 02*
 6. Vertical Slice — *coming in phase 03*
 7. Modular monolith — *coming in phase 04*
@@ -156,6 +165,8 @@ dotnet format 01-layered/Shop.slnx                   # fix formatting
 dotnet format 01-layered/Shop.slnx --verify-no-changes   # only check it (what the done-checks run)
 ```
 
+With `--filter` on a whole solution, the test projects with no matching test report "zero tests ran" and the command ends with exit code 8 even when the selected tests pass. Read the passed count in the summary (the CLI output follows your system language), or run the filter on the one test project that holds the tests.
+
 **Run a version**
 
 ```bash
@@ -169,13 +180,16 @@ Ports: 01 → 5101, 02 → 5102, 03 → 5103, 04 → 5104, 05 → 5105. Several 
 
 A **migration** is a versioned C# description of a schema change ("add table `orders`"). EF Core generates it by comparing your model with the last migration. Each version applies its migrations automatically at startup **in Development**. In production you would apply them in a controlled deployment step instead: a migration that runs by surprise on every app start is risky.
 
-The `dotnet ef` tool comes from a local tool manifest added in phase 01 (`dotnet tool restore` installs it for this repo only):
+The `dotnet ef` tool comes from the local tool manifest `.config/dotnet-tools.json`. `dotnet tool restore` downloads it for this repo only, like a package restore; nothing is installed machine-wide:
 
 ```bash
 dotnet tool restore
-dotnet ef migrations add AddSomething --project 01-layered/src/Shop.Layered.Data --startup-project 01-layered/src/Shop.Layered.Api
-dotnet ef database update --project 01-layered/src/Shop.Layered.Data --startup-project 01-layered/src/Shop.Layered.Api
+dotnet ef migrations add AddSomething --project 01-layered/src/Shop.Layered.Data     # new migration from model changes
+dotnet ef migrations list --project 01-layered/src/Shop.Layered.Data                 # which exist, which are applied
+dotnet ef database update --project 01-layered/src/Shop.Layered.Data                 # apply them to the local database
 ```
+
+Each data project has a small **design-time factory** (`ShopDbContextFactory`) that tells the tool how to create the `DbContext`, so the data project is all the tool needs: no `--startup-project`, and the API does not have to start.
 
 ---
 
@@ -255,6 +269,8 @@ With one shared file, the five versions differ **only in architecture**, never i
 ```
 
 Projects list packages **without** a version (`<PackageReference Include="Microsoft.EntityFrameworkCore" />`). Two projects can therefore never use different versions of the same library, and an upgrade is a one-line change.
+
+Packages also bring their own dependencies (**transitive packages**). The Npgsql EF Core provider, for example, depends on an older EF Core than the one listed here. `CentralPackageTransitivePinningEnabled` makes the versions in this file win for those too, so the whole repo agrees on one EF Core version instead of failing the build with a version conflict (`MSB3277`).
 
 Some libraries are **deliberately not used**. MediatR, AutoMapper and FluentAssertions moved to commercial licences in 2025, and MassTransit's new major version (v9) is commercial too. More importantly, writing the small pieces they would provide by hand (a dispatcher, an outbox, a mapping) shows you how those pieces actually work.
 
@@ -563,6 +579,237 @@ Errors use **ProblemDetails** (RFC 9457), a standard JSON format for HTTP errors
 
 ---
 
+## 4. Layered (N-tier)
+
+Code: [`01-layered/`](../01-layered/README.md). Decisions: [ADR 0001](../01-layered/docs/adr/0001-use-layered-architecture.md), [ADR 0002](../01-layered/docs/adr/0002-ef-entities-as-business-model.md).
+
+### 4.1 The idea
+
+A **layered** (or **N-tier**) architecture cuts the application into horizontal slices by *kind of work*:
+
+- the **presentation layer** talks to the outside world (here: HTTP);
+- the **business layer** holds the rules ("an order can only be paid while it awaits payment");
+- the **data access layer** reads and writes the database.
+
+Each layer calls only the one below it. A request comes in at the top, goes down to the database and the answer comes back up.
+
+**Analogy.** A restaurant. The waiter (presentation) takes the order and brings the food, but never cooks. The chef (business) decides how the dish is made, but never talks to the guests. The pantry (data) stores ingredients and hands them over when asked. Everyone knows only the person next to them.
+
+It is the oldest and most common way to organise a business application, and the one most codebases you will meet in interviews use. In Java/Spring it is the familiar `@RestController` → `@Service` → `@Repository` with JPA `@Entity` classes. It solves a real problem: without it, SQL, rules and HTTP code end up mixed in the same method. Its weakness, which this chapter makes visible, is that **the dependencies point towards the database**. The business layer is built on top of the data layer, so the rules depend on storage details.
+
+"Tier" originally meant a separate machine (browser, app server, database server) and "layer" a logical part of one program. Today both words are used for the logical split. Here everything runs in one process: three layers, one deployable.
+
+### 4.2 Layers and their responsibilities
+
+```mermaid
+flowchart TD
+    Api["Shop.Layered.Api<br/>endpoints, request/response records,<br/>error → HTTP mapping"]
+    Business["Shop.Layered.Business<br/>ProductService, OrderService, PaymentService,<br/>FakePaymentGateway, validation"]
+    Data["Shop.Layered.Data<br/>ShopDbContext, EF entities, migrations"]
+    Api -->|project reference| Business
+    Business -->|project reference| Data
+    Api -.->|"transitive: compiles against entities and enums"| Data
+```
+
+An arrow means "references and depends on". Solid arrows are the project references in the `.csproj` files. The dotted one is not declared anywhere, yet it is real: a project sees the types of its references' references (a **transitive reference**). §4.6 comes back to this.
+
+| Layer | Responsibility | May know | Must NOT know | Example file |
+|---|---|---|---|---|
+| **Api** (presentation) | Receive HTTP, call one service method, map the result to a response record, turn exceptions into ProblemDetails | Business services and exceptions; ASP.NET Core; *in practice* the EF entities (to map them) | The `DbContext`, SQL, EF Core, the rules | [`Endpoints/OrderEndpoints.cs`](../01-layered/src/Shop.Layered.Api/Endpoints/OrderEndpoints.cs) |
+| **Business** | Validation, every business rule, transactions, coordination between services | The Data layer: `ShopDbContext`, the entities, EF Core, even PostgreSQL error codes | HTTP, status codes, JSON, the Api | [`Ordering/OrderService.cs`](../01-layered/src/Shop.Layered.Business/Ordering/OrderService.cs) |
+| **Data** | Map tables to classes, the schema, migrations, connection setup | EF Core and Npgsql | Business and Api: anything above it | [`ShopDbContext.cs`](../01-layered/src/Shop.Layered.Data/ShopDbContext.cs) |
+
+A **service** in this style is a class that groups the operations on one area (`OrderService.PlaceAsync`, `PayAsync`, `CancelAsync`). An **entity** here means an EF Core entity: a class mapped to a table row ([`Entities/Order.cs`](../01-layered/src/Shop.Layered.Data/Entities/Order.cs)). It has public setters and no behaviour, so it is an **anemic** model (§3.7). The **`DbContext`** is EF Core's unit of work: it tracks the entities you loaded or added and writes all changes in one `SaveChanges` call.
+
+**Data shapes at each boundary** while placing an order:
+
+| Boundary | Type that crosses it | Defined in | Why this type |
+|---|---|---|---|
+| Client → Api | JSON → `PlaceOrderRequest` | Api ([`Models/OrderModels.cs`](../01-layered/src/Shop.Layered.Api/Models/OrderModels.cs)) | The shape of the HTTP body, owned by the presentation layer |
+| Api → Business | `Guid customerId` + `OrderLineInput[]` | Business ([`OrderService.cs`](../01-layered/src/Shop.Layered.Business/Ordering/OrderService.cs)) | The Business layer cannot see Api types, so it defines its own input |
+| Business ↔ Data | `Order`, `OrderLine`, `Product` **EF entities** | Data | **The business model *is* the persistence model**: one class for both |
+| Business → Api | `Order` **EF entity** | Data | The service returns what it worked on |
+| Api → Client | `OrderResponse` → JSON | Api | Mapped "at the last moment" so the JSON does not expose every column |
+
+The third and fourth rows are the point of this version. One class serves as the table row, the business object and, almost, the API shape, so a change to any of them ripples through all three layers (see "where would I change…" in §4.5).
+
+> Why not return the entity as JSON directly and skip `OrderResponse`? Many layered apps do. It fails in subtle ways. Every new column becomes public API. Internal fields such as `Version` leak out. Navigation properties can loop (an order with lines that point back to the order). The response record costs a few lines and keeps the JSON stable.
+
+### 4.3 Using it
+
+1. `docker compose up -d` at the repo root (PostgreSQL on port 5433).
+2. `dotnet run --project 01-layered/src/Shop.Layered.Api`. It listens on **http://localhost:5101** and applies the migrations to `shop_layered` on startup (Development only).
+3. Open [`http/shop.http`](../http/shop.http) with `@baseUrl = {{layered}}` and send the requests from top to bottom: create a product, place an order (the answer is `201` with `"status": "AwaitingPayment"`), pay it (`"Paid"`), then the declined-payment block (`"Cancelled"`, `"PaymentDeclined"`, stock back to 3).
+4. Watch the console: creating a product and placing, paying or cancelling an order each log one line (`Order … placed: AwaitingPayment`). When two requests race for the same order, EF Core also logs the losing update as `fail: Microsoft.EntityFrameworkCore.Update`. The request still ends as a clean `409`; EF Core logs before our code handles the exception.
+
+**Try this**
+
+- **See the database.** `docker compose exec postgres psql -U shop -d shop_layered`, then `\dt` and `select "Name", "Sku", "Stock" from products;`. The tables are exactly the entities: `products`, `orders`, `order_lines`, `payments`. The column names keep the C# property names, and PostgreSQL folds unquoted names to lower case, so they need the double quotes. One more sign that the C# classes and the schema are the same thing here.
+- **Break the one enforceable rule.** In an endpoint, take `ShopDbContext` as a parameter and query it. It compiles, because the Data project is reachable transitively. Then run `dotnet test 01-layered/tests/Shop.Layered.ArchitectureTests`: `Api_DoesNotUseTheDbContext` fails and names the offending type. Undo the change.
+- **Watch the race being handled.** Create a product with `initialStock: 1` and send the same `POST /api/orders` twice quickly. One gets `AwaitingPayment`, the other `Rejected`, and the stock is 0, never -1. The contract test `ConcurrentOrdersForLastUnits_NeverOversell` does this with ten requests.
+- **Feel the coupling.** Rename `Product.Name` to `Title` in the entity and build: errors appear in Business *and* Api.
+
+### 4.4 Before our code runs: what ASP.NET Core does
+
+This box applies to every version; later chapters point back to it. The chapters are about *our* layers. The framework part is the same everywhere and short:
+
+1. **Kestrel**, ASP.NET Core's built-in web server, accepts the TCP connection and parses the HTTP request.
+2. The request goes through the **middleware pipeline**: a chain of components that each can act before and after the next one. Ours, in [`Program.cs`](../01-layered/src/Shop.Layered.Api/Program.cs), are the exception handler (catches exceptions thrown further down and turns them into ProblemDetails) and status code pages (gives empty error responses, like an unknown route, a ProblemDetails body).
+3. **Routing** matches the method and path (`POST /api/orders`) to one **endpoint**: the lambda registered with `MapPost`.
+4. **Binding** builds the lambda's parameters. The JSON body becomes the request record (System.Text.Json, camelCase), route values become `Guid id` (the `{id:guid}` constraint makes a non-Guid a `404`), query strings become `Guid? orderId`, and services come from **dependency injection** (§3.6). A new DI **scope** is created per request, so every scoped service in this request (`OrderService`, `ShopDbContext`) is the same instance from top to bottom. If binding fails (malformed JSON, `"abc"` where a Guid is expected), the endpoint never runs. In Development, Minimal APIs throw a `BadHttpRequestException` for it, and our exception handler turns that into a `400` ProblemDetails like any other error. In Production the framework answers `400` itself.
+5. Our endpoint runs. On the way back, the returned `TypedResults` value is serialised to JSON (enums as strings, thanks to `JsonStringEnumConverter`).
+
+**Validation** is deliberately *not* done by the framework here. .NET 10 can validate request records with attributes (`AddValidation()`), but then the rules would sit in the presentation layer in every version and hide the difference this playground is about. Instead, each version validates where its architecture says the rules belong. In 01 that is the Business services.
+
+### 4.5 Journey of a request
+
+`POST /api/orders` with one line of two units, enough stock, from the client's request to its response:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    box Api layer (presentation)
+        participant E as OrderEndpoints
+        participant M as OrderResponse
+    end
+    box Business layer
+        participant OS as OrderService
+        participant PS as ProductService
+    end
+    box Data layer
+        participant DB as ShopDbContext + entities
+    end
+    participant PG as PostgreSQL
+    C->>E: POST /api/orders {customerId, lines}
+    E->>OS: PlaceAsync(customerId, OrderLineInput[])
+    OS->>OS: Validate(customerId, lines)
+    OS->>DB: Products.Where(id in lines)
+    DB->>PG: SELECT … FROM products
+    OS->>OS: new Order entity, snapshot name + price, totals
+    OS->>DB: BeginTransaction
+    OS->>PS: TryReserveStockAsync(lines)
+    PS->>DB: ExecuteUpdate per line
+    DB->>PG: UPDATE products SET stock = stock - 2 WHERE id = … AND stock >= 2
+    PS-->>OS: true
+    OS->>DB: Orders.Add(order), SaveChanges
+    DB->>PG: INSERT orders, order_lines
+    OS->>DB: Commit
+    OS-->>E: Order (EF entity)
+    E->>M: OrderResponse.From(order)
+    E-->>C: 201 Created, Location, JSON
+```
+
+**Reception (Api layer)**
+
+1. The framework part (Kestrel, middleware, routing, binding) is the box in §4.4. It ends with a `PlaceOrderRequest` record and a scoped `OrderService` handed to the lambda in [`OrderEndpoints.MapOrderEndpoints`](../01-layered/src/Shop.Layered.Api/Endpoints/OrderEndpoints.cs).
+2. The endpoint converts the request lines into the Business layer's `OrderLineInput` records and calls `OrderService.PlaceAsync`. It decides nothing.
+   *Boundary Api → Business: the call goes down and the dependency goes down (Api references Business). Same direction.*
+
+**Processing (Business layer, using the Data layer)**
+
+3. `OrderService.Validate` checks the input rules: customer id present, at least one line, quantity 1–1000, no product twice. A failure throws `ValidationException` (see the error path below).
+4. The service reads the products of the order through `ShopDbContext` (`AsNoTracking`, a read-only query). An unknown product id is another validation error. The Business layer queries the database directly; there is nothing between them.
+   *Boundary Business → Data: call down, dependency down. Same direction. The Business layer compiles against EF Core.*
+5. It builds the `Order` **entity**, the same class that maps to the `orders` table. Each line snapshots the product's name and current price. The service computes `LineTotal` and `Total`. These are business rules written as assignments, because the entity has no methods to hold them.
+6. **The transaction starts** (`Database.BeginTransactionAsync`). Everything until the commit happens or nothing does.
+7. `ProductService.TryReserveStockAsync` reserves each line with a **conditional update** (§3.10). There is no "read the stock, check it, write it back" sequence, which two requests could interleave. Instead the check is inside the `UPDATE` itself: `… SET stock = stock - 2 WHERE id = … AND stock >= 2`. It returns how many rows changed: 1 means reserved, 0 means not enough stock. PostgreSQL locks the row during the update. A second request for the same product waits, then re-checks `stock >= 2` against the new value, so two requests cannot both take the last unit. That re-check is how PostgreSQL behaves at its default **isolation level**, READ COMMITTED. (Under the stricter REPEATABLE READ, the waiting update would fail with a serialization error instead, and the code would have to retry.) Lines are reserved in product-id order, so two multi-line orders lock rows in the same order and can never wait for each other forever (a **deadlock**).
+   This step is a service calling another service on the **same scoped `DbContext`**, which is why both run inside the transaction opened in step 6. This hidden sharing is how layered code composes work. It is convenient, and nothing in the method signatures tells you about it.
+8. All lines reserved: the order gets `AwaitingPayment`, `SaveChanges` inserts the order and its lines, and **the transaction commits**. Had a line failed, leaving the `using` block without committing rolls everything back. Units reserved for earlier lines come back too. The order is then stored as `Rejected`. Not enough stock is not an error: it is a normal business outcome, and the answer is still `201`.
+
+**Response (Api layer)**
+
+9. The service returns the `Order` entity, a Data-layer type, to the Api.
+   *Boundary Business → Api (return value): the data flows up, the dependency still points down.*
+10. The endpoint maps it with `OrderResponse.From` ([`Models/OrderModels.cs`](../01-layered/src/Shop.Layered.Api/Models/OrderModels.cs)) and returns `TypedResults.Created` with the `Location` header. The status enum, defined in Data, is written as the string `"AwaitingPayment"`.
+
+**The error path**
+
+- **Invalid request → `400`** (for example `quantity: 0`). Detected in step 3 by `OrderService.Validate`, before any database work. The `ValidationException` flies up through the endpoint, which catches nothing. The exception-handler middleware hands it to [`BusinessExceptionHandler`](../01-layered/src/Shop.Layered.Api/ErrorHandling/BusinessExceptionHandler.cs). That is the only class that knows which exception means which status code, and it writes an `HttpValidationProblemDetails` with an `errors` member: `{"lines[0].quantity": ["Quantity must be between 1 and 1000."]}`.
+- **Broken business rule → `409`** (for example paying an order that is already `Paid`). `OrderService.PayAsync` loads the order, `EnsureAwaitingPayment` sees the wrong status and throws `BusinessRuleException`, which the same handler maps to `409` ProblemDetails. Nothing was written.
+- **Two requests change the same order at once → `409`.** Pay and cancel load the order *tracked*. Its `Version` property is mapped to PostgreSQL's `xmin` system column, a value that changes on every update of the row. EF Core adds `WHERE xmin = <value read>` to the update. The loser of the race updates zero rows and gets a `DbUpdateConcurrencyException`, which `OrderService.SaveOrderAsync` turns into `BusinessRuleException`. This is **optimistic concurrency** (§3.10): no lock while reading, a check while writing. When two *pays* race, the loser may instead hit the second guard first: the unique index on `payments.OrderId` rejects a second payment row. `SaveOrderAsync` maps that to the same `409`.
+- **The double charge hidden in that race.** `PayAsync` calls the gateway *before* opening the transaction, so a slow payment provider never keeps a transaction open. The cost: both racing requests reach the gateway. The loser's `Payment` row is rolled back, but with a real provider its money has already moved. Real systems close this gap in one of three ways. They send the provider an **idempotency key** (the order id), so a repeated charge is ignored. They refund the loser. Or they first store a "payment pending" state that a second pay is refused against. Version 05 does the last one (`PaymentPending`).
+- **A request the framework cannot bind** (malformed JSON, a non-Guid id in the query string) never reaches the Business layer. §4.4 explains how it still becomes a `400` ProblemDetails.
+- **Anything else** (database down, a bug) is not handled by `BusinessExceptionHandler` and ends as a `500`.
+
+Notice that the Business layer reports failures *without knowing HTTP*. It throws its own exception types and the Api translates them. That part of the layering is clean.
+
+**Where would I change…**
+
+| Change | Files touched | Layers |
+|---|---|---|
+| Add a field to products (`Description`) | `Data/Entities/Product.cs`, `ShopDbContext` (length), a new migration; `ProductService.CreateAsync` (parameter, validation); `Api/Models/ProductModels.cs` (request and response), `ProductEndpoints` | **all three** |
+| Rename a field (`Name` → `Title`) | Same as above, plus `OrderService` (it copies the name into each line) | **all three** |
+| Rename only the column (`"Name"` → `title`) | `HasColumnName("title")` in `ShopDbContext` + a migration | Data |
+| Change a rule (max 500 units per line) | `OrderService.MaxQuantityPerLine` | Business |
+| Switch PostgreSQL → SQL Server | Data (provider, regenerated migrations, `xmin` → `rowversion`), **and Business** (it catches `PostgresException` unique violations) | Data + Business |
+| Add an endpoint (orders of a customer) | `OrderService.ListByCustomerAsync`, `OrderEndpoints`, maybe an index in `ShopDbContext` | all three |
+
+Two lessons hide in that table. A business change stays in one layer, which is the promise of layering. A data change climbs to the top, which is its price. And because Business depends on Data, even "switch the database" reaches the business rules.
+
+**Unit tests and the database.** [`PriceRulesTests`](../01-layered/tests/Shop.Layered.UnitTests/PriceRulesTests.cs) and [`FakePaymentGatewayTests`](../01-layered/tests/Shop.Layered.UnitTests/FakePaymentGatewayTests.cs) are the only unit tests in this version. `OrderService` takes a `ShopDbContext` and runs SQL: conditional updates, transactions, the `xmin` check. To test "placing an order without stock ends `Rejected`", you need a real PostgreSQL. EF Core's in-memory provider supports neither `ExecuteUpdate` nor transactions, and SQLite behaves differently under concurrency. Here the contract tests carry that weight with Testcontainers. It works, but every business test is a slow integration test. Version 02 fixes exactly this.
+
+### 4.6 Rules
+
+The architecture tests are in [`LayerRulesTests.cs`](../01-layered/tests/Shop.Layered.ArchitectureTests/LayerRulesTests.cs):
+
+| Test | Rule | Why it exists |
+|---|---|---|
+| `Api_DoesNotReferenceData` | The Api `.csproj` has no `ProjectReference` to Data | Each layer declares only the layer directly below |
+| `Api_DoesNotUseTheDbContext` | No Api type depends on `ShopDbContext` or EF Core | Endpoints must not bypass the rules by querying or saving themselves |
+| `Business_DoesNotDependOnAspNetCore` | No Business type uses `Microsoft.AspNetCore.*` | The rules must work the same from HTTP, a background job or a test |
+| `Data_DoesNotReferenceBusiness` | No Data type depends on a Business type | Dependencies point down; the bottom layer knows nobody |
+| `Business_DoesNotReferenceApi` | No Business type depends on an Api type | The Api calls Business, never the other way round |
+
+The last two can never fail today: breaking them would need a circular project reference, which MSBuild refuses to build. They are kept so the whole rule set is written down in one place. The first three can fail without any compiler error. A single `<FrameworkReference Include="Microsoft.AspNetCore.App" />` in the Business project is enough to break `Business_DoesNotDependOnAspNetCore`. That is the general lesson: **an architecture test earns its place when it checks something the project references do not already prevent.**
+
+**The honest limit.** "Api does not reference Data" is the classic rule of this style, and the project file obeys it. Yet `ProductResponse.From(Product product)` takes a Data entity and `OrderResponse` exposes Data's enums. They compile because the Api sees Data *transitively* through Business. An ArchUnitNET rule "Api types do not depend on Data types" would fail on this code, so the test checks what can honestly be enforced here: the declared reference, and no use of the database itself. Two ways out exist. Set `DisableTransitiveProjectReferences` so the Api cannot see Data at all, which forces the Business layer to return its own types. Or put the business model somewhere that does not depend on the database, which is version 02. **Strict layering** means each layer uses only the one directly below; **relaxed layering** lets a layer use any layer beneath it. This version is strict on paper and relaxed in practice. That is common, and worth noticing in any codebase you review.
+
+The second limit is the direction itself. Every rule above is satisfied, and still the business rules depend on EF Core and PostgreSQL. Layering controls *who may call whom*. It says nothing about *which side owns the abstractions*. §3.6 explains why that matters; chapter 5 acts on it.
+
+### 4.7 What changed from the previous version
+
+Nothing: this is the baseline. Every later version is built from a copy of the previous one and refactored, so the differences are diffs you can read. What 01 fixes for the rest is the external behaviour (it passes the 44 contract tests) and the schema of the shop.
+
+### 4.8 Trade-offs
+
+**Benefits**
+
+- Everyone knows it. Onboarding is fast and the folder names explain themselves.
+- Few types: one class per table, one service per area. A small app stays small.
+- Reading top-down is easy: endpoint → service → query.
+- The database's own features (conditional updates, transactions, unique indexes) are used directly, with no abstraction in between.
+
+**Costs**
+
+- The business rules depend on the data layer: on EF Core and even on PostgreSQL error codes. Changing storage reaches the rules.
+- The entity is the business model, the table row and almost the API shape. A change in one ripples through all three.
+- The rules are scattered across services. Nothing stops a new method from setting `order.Status = Paid` without the checks, because the entity has public setters.
+- Business logic is hard to unit-test: each test needs a database.
+- Services call services and share a `DbContext` implicitly. In a big codebase this becomes a web of hidden coupling, sometimes called a "big ball of mud".
+- Pass-through code: an endpoint that only calls a service that only calls the `DbContext` adds layers without adding decisions (the "lasagna" smell).
+
+**When to use it.** CRUD-heavy apps with few rules, internal tools, prototypes, short-lived systems, and teams that need the simplest structure everyone already knows.
+
+**When NOT to use it.** When the domain has real rules and states (like an order lifecycle that grows), when the infrastructure must be swappable or testable in isolation, or when several teams need clear ownership. The first two point to chapter 5, the third to chapters 7 and 8.
+
+### 4.9 Interview questions
+
+1. **What are the layers of an N-tier application, and what does each do?**
+   Presentation handles input and output (HTTP, UI). Business holds the rules and the transactions. Data access reads and writes storage. Each layer calls only the one below. In Spring: controller, service, repository plus entities.
+2. **What is the main weakness of classic layering?**
+   The dependency direction. Business depends on data access, so the rules depend on the persistence technology. That makes them hard to test without a database, and storage changes leak upwards. The fix is dependency inversion: the business code owns interfaces and the data layer implements them (Clean/Hexagonal).
+3. **Strict versus relaxed layering?**
+   Strict: a layer may use only the layer directly below. Relaxed: any lower layer. Many codebases are relaxed in practice through transitive references, for example controllers using JPA entities. Name the rule you want and enforce it with an architecture test.
+4. **Should a controller return JPA/EF entities?**
+   Better not. It turns every column into public API, can leak internal fields, can loop through navigation properties, and couples the API to the schema. Map to response DTOs at the edge.
+5. **How do you stop two requests from selling the last unit twice?**
+   Let the database decide atomically. Use a conditional `UPDATE … WHERE stock >= @qty` and check the affected row count, or optimistic concurrency with a version column and a retry. Never read-check-write in application code without one of them. For several rows, lock them in a consistent order to avoid deadlocks.
+6. **When would you still choose layered today?**
+   For CRUD-style apps, small teams, and short-lived or internal systems, where its familiarity and low ceremony beat the cost of the coupling. Plan the exit: keep the rules in services, keep entities out of the API, and the move to Clean Architecture stays a refactoring, not a rewrite.
+
+---
+
 ## Glossary
 
 Terms are added as each chapter introduces them. The section where a term is explained is in brackets.
@@ -579,7 +826,9 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Aspire**: Microsoft's toolkit (formerly ".NET Aspire") to run, wire and observe a distributed application locally. The AppHost describes the system; the dashboard shows logs and traces. [§1.4]
 - **Assembly**: the compiled output of a project (`.dll` / `.exe`). [§2.2]
 - **Assembly fixture**: an xUnit v3 object created once for all the tests in an assembly. [§2.8]
+- **Big ball of mud**: a system with no visible structure, where everything depends on everything. [§4.8]
 - **Bounded context**: a boundary inside which one domain model and one language apply. [§3.7]
+- **Business layer**: in a layered architecture, the layer with the rules and the transactions, between presentation and data access. [§4.1]
 - **Call direction / dependency direction**: who calls whom at runtime, versus whose code references whose at compile time. [§3.6]
 - **Central package management**: all NuGet versions in one `Directory.Packages.props`. [§2.5]
 - **Clean Architecture**: Robert C. Martin's version of "business rules in the centre, dependencies point inwards" (2012/2017). [§3.4]
@@ -588,6 +837,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Cohesion**: how much the things inside one part belong together. High is good. [§3.5]
 - **Command**: a request to change state (`PlaceOrder`). [§3.8]
 - **Compensating action**: a step that undoes the effect of an earlier step when a later one fails (release stock after a declined payment). [§3.10]
+- **Composition root**: the one place, at startup, where the application wires its classes together (`Program.cs` here). [§4.2]
 - **Concurrency**: several requests working on the same data at the same time. [§3.10]
 - **Conditional update**: an `UPDATE` that only applies if a condition still holds (`WHERE stock >= 1`), so a race cannot oversell. [§3.10]
 - **Container / image**: an isolated running process (Docker) / the package it starts from. [§1.3]
@@ -596,67 +846,95 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Coupling**: how much one part depends on another. Low is good. [§3.5]
 - **CQRS**: Command Query Responsibility Segregation, handling changes and reads separately. [§3.8]
 - **CRUD**: Create, Read, Update, Delete; an application that mostly stores and shows data. [§3.7]
+- **Data access layer**: the bottom layer of a layered architecture; it reads and writes storage. [§4.1]
+- **DbContext**: EF Core's main class. It tracks the entities you loaded or added and writes all their changes in one `SaveChanges` call. [§4.2]
 - **DDD**: Domain-Driven Design, shaping code, boundaries and language after the business domain. Strategic (boundaries) and tactical (building blocks). [§3.7]
+- **Deadlock**: two transactions each waiting for a lock the other holds; the database kills one of them. Avoided by always locking rows in the same order. [§4.5]
 - **Dependency injection (DI)**: supplying a class's dependencies from outside (constructor parameters), wired at startup. [§3.6]
 - **Dependency inversion**: high-level code owns the interface it needs; low-level code implements it, so the dependency points to the high-level code. [§3.6]
 - **Dependency rule**: source code dependencies point inwards, towards the business rules. [§3.4]
 - **Deployable**: something you can start and ship on its own. [§3.2]
+- **Design-time factory**: a class (`IDesignTimeDbContextFactory`) that tells the `dotnet ef` tool how to create a `DbContext` without starting the application. [§1.5]
 - **Docker Compose**: a tool that starts the containers described in a `compose.yaml` file. [§1.3]
 - **Domain**: the area of business the software serves. [§3.7]
 - **Domain event**: something meaningful that happened inside a bounded context, named in the past tense. [§3.9]
 - **Domain service**: a business operation that does not naturally belong to one entity. [§3.7]
+- **DTO**: Data Transfer Object, a plain type that only carries data across a boundary (a request or response record). [§4.2]
+- **EF Core / EF Core entity**: Entity Framework Core, the .NET object-relational mapper that maps classes to tables. An EF Core entity is a class mapped to a table; it is not the same idea as a DDD entity. [§4.2]
+- **Endpoint**: in ASP.NET Core, the code that handles one method and path (`POST /api/orders`). [§4.4]
 - **Entity**: a domain object with an identity that lasts through changes. [§3.7]
 - **Event**: a fact about something that happened (`OrderPlaced`). [§3.9]
 - **Event sourcing**: storing every event instead of the current state, and computing the state by replaying them. [§3.2]
 - **Eventual consistency**: parts of the system may disagree for a short time but converge. [§3.10]
+- **Exception handler (ASP.NET Core)**: middleware that catches exceptions thrown further down the pipeline and writes an error response; ours turns them into ProblemDetails. [§4.4]
 - **Feature band**: a group of SDK releases (10.0.4xx) that adds tooling features without changing the runtime. [§1.1]
 - **`global.json`**: the file that pins the .NET SDK, the test runner and project SDK versions for a folder. [§1.1]
 - **Hexagonal Architecture / Ports and Adapters**: Alistair Cockburn's style (2005): the application defines ports, and adapters connect them to technologies. [§3.4]
+- **Idempotency key**: a unique value sent with a request (such as the order id with a charge) so the receiver can recognise a repeat and do the work only once. [§4.5]
 - **Idempotent**: doing it twice has the same effect as doing it once. [§3.9]
 - **Inbox**: a table of already-handled message ids, used to ignore duplicate deliveries. [§3.9]
 - **Integration event**: an event published to other bounded contexts, part of a context's public contract. [§3.9]
+- **Isolation level**: how much concurrent transactions see of each other. PostgreSQL defaults to READ COMMITTED: each statement sees the data committed before it started. [§4.5]
+- **Kestrel**: the web server built into ASP.NET Core. [§4.4]
+- **Lasagna code**: so many pass-through layers that each one adds code but no decision. [§4.8]
 - **Layer**: a group of code with one kind of responsibility, with rules about which layers it may use. [§3.2]
+- **Local tool manifest**: `.config/dotnet-tools.json`, the list of .NET tools (such as `dotnet-ef`) a repo uses; `dotnet tool restore` fetches them for that repo only. [§1.5]
 - **Mermaid**: a text format for diagrams, rendered by GitHub and by VS Code with an extension. [§1.2]
 - **Message**: a piece of data sent from one part of a system to another, often through a broker. [§3.9]
 - **Message broker**: a server that receives messages and delivers them to consumers through queues (RabbitMQ). [§3.9]
 - **Microservices**: independently deployable services, each owning one business capability and its data. [§3.2]
 - **Microsoft.Testing.Platform**: the .NET 10 test runner used by `dotnet test` here (the older one is VSTest). [§1.1]
+- **Middleware**: a component of the ASP.NET Core request pipeline; each one can act before and after the next. [§4.4]
 - **Migration (EF Core)**: a versioned, generated description of a database schema change. [§1.5]
+- **Model binding**: the framework step that turns route values, query strings and the JSON body into the parameters of an endpoint. [§4.4]
 - **Modular monolith**: one deployable split inside into modules with strict boundaries. [§3.2]
 - **Module**: a part of an application with a clear boundary and a small public surface. [§3.2]
 - **Monolith**: an application deployed as a single unit. [§3.2]
 - **MSBuild**: the .NET build engine that reads `.csproj` and `.props` files. [§1.1]
 - **N-tier (layered) architecture**: horizontal layers (presentation → business → data), each calling the one below. [§3.2]
+- **Navigation property**: a property of an EF Core entity that points to related entities (`Order.Lines`). [§4.2]
 - **NuGet**: .NET's package manager and the nuget.org package registry. [§2.2]
 - **Onion Architecture**: Jeffrey Palermo's style (2008): the domain model in the centre, with concentric rings around it. [§3.4]
 - **Optimistic concurrency**: detecting, at save time, that someone else changed the row since you read it, and retrying. [§3.10]
 - **Outbox (transactional)**: saving outgoing messages in the same transaction as the data and publishing them afterwards, so none is lost. [§3.9]
 - **Port**: in Hexagonal Architecture, an interface defined by the application for something it needs or offers. [§3.4]
 - **PostgreSQL**: the open-source relational database used by every version. [§1.3]
+- **Presentation layer**: the top layer of a layered architecture; it talks to the outside world (HTTP, UI). [§4.1]
 - **ProblemDetails**: the standard JSON format for HTTP API errors (RFC 9457). [§3.11]
 - **Project (SDK-style)**: a `.csproj` that compiles to one assembly, with defaults supplied by the SDK. [§2.2]
 - **Projection**: a query that selects exactly the data a response needs, instead of loading whole entities. [§3.8]
 - **Query**: a request that reads state and changes nothing (`GetOrder`). [§3.8]
 - **RabbitMQ**: the open-source message broker used by version 05. [§3.9]
+- **Relaxed / strict layering**: strict means a layer may use only the layer directly below it; relaxed means any layer below. [§4.6]
 - **Repository**: a collection-like interface to load and save aggregates. [§3.7]
 - **RFC**: Request for Comments, a numbered internet standard. [§3.11]
 - **Roslyn**: the C# compiler. [§1.1]
+- **Routing**: the framework step that picks the endpoint matching a request method and path. [§4.4]
+- **Row lock**: a lock the database takes on a row while a transaction updates it; other writers of that row wait until it commits. [§4.5]
+- **Row version**: a value that changes on every update of a row; comparing it at save time detects that someone else changed the row (`xmin` here). [§4.5]
 - **Runtime**: the part of .NET that runs compiled programs. [§1.1]
 - **Saga**: a multi-step process across services, made of local transactions, with compensating actions on failure. [§3.10]
+- **Scope (dependency injection)**: a lifetime for services; ASP.NET Core creates one per request, so scoped services are shared inside that request only. [§4.4]
 - **SDK**: Software Development Kit; for .NET, the runtime + C# compiler + `dotnet` CLI + MSBuild. [§1.1]
 - **Serverless**: deploying individual functions that the cloud runs on demand. [§3.2]
+- **Service (layered architecture)**: a class in the business layer that groups the operations of one area (`OrderService`). [§4.2]
 - **SKU**: Stock Keeping Unit, the shop's own unique product code. [§3.11]
+- **Snapshot (order line)**: a copy of a value taken at a moment in time, such as the product name and price when an order is placed. [§4.5]
 - **SOA**: Service-Oriented Architecture, large shared services often joined by an enterprise service bus; the ancestor of microservices. [§3.2]
 - **Software architecture**: the decisions about a system's structure that are expensive to change. [§3.1]
-- **Solution (`.slnx`)**: a file that groups the projects worked on together. [§2.1]
 - **SOLID**: five object-oriented design principles: Single responsibility, Open/closed, Liskov substitution, Interface segregation, Dependency inversion. [§3.6]
+- **Solution (`.slnx`)**: a file that groups the projects worked on together. [§2.1]
 - **Strong consistency**: every reader sees the latest committed data at once, as with one database transaction. [§3.10]
 - **Testcontainers**: a library that starts throwaway Docker containers for tests. [§1.3]
 - **Transaction**: a group of database changes that succeed or fail together. [§3.10]
 - **Transaction Script**: each operation is one procedure that reads, decides and writes, with no domain model. [§3.2]
+- **Transitive package**: a package your project gets because another package depends on it. [§2.5]
+- **Transitive reference**: a project sees the types of its references' references; Api sees Data through Business. [§4.2]
 - **Ubiquitous language**: one precise vocabulary shared by business experts and code. [§3.7]
+- **Unit of work**: an object that collects every change made during one business operation and writes them together (EF Core: the `DbContext` and `SaveChanges`). [§4.2]
 - **Value object**: an immutable domain object defined only by its values (`Money`). [§3.7]
 - **Vertical Slice architecture**: code organised by use case, one folder per feature, instead of by technical layer. [§3.2]
 - **Volume (Docker)**: storage that outlives a container, used here to keep the database data. [§1.3]
 - **WebApplicationFactory**: starts an ASP.NET Core app in memory for tests. [§2.7]
+- **xmin**: a PostgreSQL system column that changes on every update of a row; used as a row version for optimistic concurrency. [§4.5]
 - **xUnit**: the test framework used here (version 3). [§2.7]

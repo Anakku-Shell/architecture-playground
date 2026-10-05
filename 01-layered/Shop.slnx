@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Shop.Layered.Api/Shop.Layered.Api.csproj" />
+    <Project Path="src/Shop.Layered.Business/Shop.Layered.Business.csproj" />
+    <Project Path="src/Shop.Layered.Data/Shop.Layered.Data.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Shop.Layered.ArchitectureTests/Shop.Layered.ArchitectureTests.csproj" />
+    <Project Path="tests/Shop.Layered.ContractTests/Shop.Layered.ContractTests.csproj" />
+    <Project Path="tests/Shop.Layered.UnitTests/Shop.Layered.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/contract-tests/">
+    <Project Path="../contract-tests/Shop.ContractTests/Shop.ContractTests.csproj" />
+  </Folder>
+</Solution>

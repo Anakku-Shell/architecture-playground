@@ -5,8 +5,15 @@
   Guide: chapter 2, "Central package management".
 -->
 <Project>
+  <PropertyGroup>
+    <!-- Versions listed here also win for packages that arrive transitively. Without this, Npgsql's EF
+         provider (built against EF Core 10.0.4) and EF Core Design 10.0.12 disagree (MSB3277). -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
   <ItemGroup Label="Web and persistence">
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
     <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
   </ItemGroup>

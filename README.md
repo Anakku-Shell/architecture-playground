@@ -4,7 +4,7 @@ One small shop implemented **five times** in .NET, each time with a different ar
 
 | # | Folder | Architecture | Status |
 |---|---|---|---|
-| 01 | `01-layered` | N-tier layered (`Api → Business → Data`) | coming |
+| 01 | [`01-layered`](01-layered/README.md) | N-tier layered (`Api → Business → Data`) | ready |
 | 02 | `02-clean-hexagonal` | Clean / Hexagonal (ports and adapters) with a rich domain model | coming |
 | 03 | `03-vertical-slice` | Vertical slices (one folder per use case) with light CQRS | coming |
 | 04 | `04-modular-monolith` | Modular monolith: one process, three modules, a different style per module | coming |
