@@ -28,6 +28,20 @@ public sealed class ValidationErrors
         }
     }
 
+    /// <summary>Runs a domain check that returns nothing; a <see cref="DomainValidationException"/> is recorded under <paramref name="field"/>.</summary>
+    public void Check(string field, Action check)
+    {
+        ArgumentNullException.ThrowIfNull(check);
+        try
+        {
+            check();
+        }
+        catch (DomainValidationException ex)
+        {
+            Add(field, ex.Message);
+        }
+    }
+
     public void Add(string field, string message)
     {
         if (!_errors.TryGetValue(field, out var messages))

@@ -17,6 +17,10 @@ public abstract class ProductContractTests(IShopApi api) : ContractTests(api)
         ["empty sku"] = new { name = "Pen", sku = "", price = 1m, initialStock = 1 },
         ["sku of 51 chars"] = new { name = "Pen", sku = new string('S', 51), price = 1m, initialStock = 1 },
         ["negative initial stock"] = new { name = "Pen", sku = ShopClient.UniqueSku(), price = 1m, initialStock = -1 },
+        ["price above 1,000,000.00"] = new { name = "Pen", sku = ShopClient.UniqueSku(), price = 1_000_000.01m, initialStock = 1 },
+        // Passes "positive, two decimals" but would overflow a numeric(18,2) column: must be a 400, never a 500.
+        ["huge price"] = new { name = "Pen", sku = ShopClient.UniqueSku(), price = 99_999_999_999_999_999m, initialStock = 1 },
+        ["initial stock above 1,000,000"] = new { name = "Pen", sku = ShopClient.UniqueSku(), price = 1m, initialStock = 1_000_001 },
     };
 
     [Fact]
@@ -106,6 +110,7 @@ public abstract class ProductContractTests(IShopApi api) : ContractTests(api)
     [Theory]
     [InlineData("0")]
     [InlineData("10.999")]
+    [InlineData("1000000.01")]
     public async Task ChangePrice_ToInvalidPrice_Returns400_AndPriceUnchanged(string invalidPrice)
     {
         var product = await Shop.CreateProduct(price: 10.00m);
@@ -143,6 +148,36 @@ public abstract class ProductContractTests(IShopApi api) : ContractTests(api)
 
         await ProblemAssert.IsProblem(response, HttpStatusCode.Conflict);
         Assert.Equal(3, (await Shop.GetProduct(product.Id)).Stock);
+    }
+
+    [Fact]
+    public async Task CreateProduct_AtTheLimits_IsAccepted()
+    {
+        var product = await Shop.CreateProduct(price: 1_000_000.00m, stock: 1_000_000);
+
+        Assert.Equal(1_000_000.00m, product.Price);
+        Assert.Equal(1_000_000, product.Stock);
+    }
+
+    [Fact]
+    public async Task AdjustStock_AboveTheMaximum_Returns409_AndStockUnchanged()
+    {
+        var product = await Shop.CreateProduct(stock: 999_999);
+
+        await ProblemAssert.IsProblem(await Shop.AdjustStockRaw(product.Id, 2), HttpStatusCode.Conflict);
+
+        Assert.Equal(999_999, (await Shop.GetProduct(product.Id)).Stock);
+    }
+
+    [Theory]
+    [InlineData(1_000_001)]
+    [InlineData(-1_000_001)]
+    [InlineData(int.MaxValue)]
+    public async Task AdjustStock_ByMoreThanAMillion_Returns400(int quantity)
+    {
+        var product = await Shop.CreateProduct(stock: 3);
+
+        await ProblemAssert.IsValidationProblem(await Shop.AdjustStockRaw(product.Id, quantity));
     }
 
     [Fact]

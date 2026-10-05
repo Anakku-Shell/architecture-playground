@@ -20,7 +20,7 @@ The rules are enforced by `Shop.Clean.ArchitectureTests` (guide §5.6).
 
 ## Consequences
 
-- Good: the domain and the use cases are unit-tested without a database (69 tests in about a second).
+- Good: the domain and the use cases are unit-tested without a database (75 tests in about a second).
 - Good: switching the database or the payment provider changes Infrastructure only.
 - Good: the location of every kind of code is predictable, for people and for AI agents, and checked by tests.
 - Bad: about 50% more code than 01: commands, value objects, converters, response mapping, ports.

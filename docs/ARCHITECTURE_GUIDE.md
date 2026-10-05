@@ -584,6 +584,8 @@ Three bounded contexts:
 
 A **SKU** (Stock Keeping Unit) is the shop's own product code, like `MUG-001`. It is unique and case-insensitive, and it is stored in upper case.
 
+**Limits.** A price is at most 1,000,000.00 with two decimals at most. Stock goes from 0 to 1,000,000, and one adjustment moves at most 1,000,000 units. An order line asks for 1 to 1000 units. Beyond a limit, invalid input is a `400`, and an adjustment that would push the stock out of range is a `409`. These are business rules, but they also protect the system. Without them, a price of 10¹⁷ passes "positive, two decimals" and then overflows the `numeric(18,2)` column (a `500`), and stock near the largest `int` wraps around to a negative number. Every type and every column has a limit; a good API states it as a rule instead of discovering it as a crash.
+
 **The life of an order** is where the rules are:
 
 ```mermaid
@@ -1061,7 +1063,7 @@ What changed is only *how the code reaches it*. Value objects are stored as plai
 ```bash
 docker compose up -d
 dotnet run --project 02-clean-hexagonal/src/Shop.Clean.Api      # http://localhost:5102
-dotnet test 02-clean-hexagonal/tests/Shop.Clean.UnitTests        # 69 tests, no database, about one second
+dotnet test 02-clean-hexagonal/tests/Shop.Clean.UnitTests        # 75 tests, no database, about one second
 ```
 
 In [`http/shop.http`](../http/shop.http) set `@baseUrl = {{clean}}` and send the same requests as for 01. The answers are identical: the contract tests guarantee it. The console log lines now come from the use-case classes (`Shop.Clean.Application.UseCases.Ordering.PlaceOrder`).
@@ -1178,7 +1180,7 @@ sequenceDiagram
 
 The pattern is the mirror image of 01. **Technology changes stay at the edge, and rule changes stay in the centre.** Adding data still crosses every layer, now with more mapping.
 
-**Unit tests without a database.** [`Domain/`](../02-clean-hexagonal/tests/Shop.Clean.UnitTests/Domain) tests the aggregates, value objects and the domain service as plain objects: every order transition, valid and invalid. [`Application/`](../02-clean-hexagonal/tests/Shop.Clean.UnitTests/Application) runs the use cases against hand-written in-memory adapters. That is 69 tests in about a second, where 01 had 12 that could run without PostgreSQL. The contract tests still run against a real database. The unit tests prove the rules; the contract tests prove the adapters and the wiring.
+**Unit tests without a database.** [`Domain/`](../02-clean-hexagonal/tests/Shop.Clean.UnitTests/Domain) tests the aggregates, value objects and the domain service as plain objects: every order transition, valid and invalid. [`Application/`](../02-clean-hexagonal/tests/Shop.Clean.UnitTests/Application) runs the use cases against hand-written in-memory adapters. That is 75 tests in about a second, where 01 had 12 that could run without PostgreSQL. The contract tests still run against a real database. The unit tests prove the rules; the contract tests prove the adapters and the wiring.
 
 ### 5.6 Rules
 
@@ -1210,8 +1212,8 @@ Two tools work together here. **Project references** stop the wrong *direction* 
 | PostgreSQL errors | Caught in Business | Translated in the adapter into the port's exceptions |
 | Stock concurrency | Conditional `UPDATE` (the database applies the rule) | Optimistic `xmin` check + retry (the domain applies the rule) |
 | Payment gateway | Concrete class used by the service | `IPaymentGateway` port, adapter in Infrastructure |
-| Unit tests | 12 (pure helpers only) | 69 (domain + use cases with fakes) |
-| C# lines in `src/` (without migrations) | about 990 in 23 files | about 1,560 in 29 files |
+| Unit tests | 12 (pure helpers only) | 75 (domain + use cases with fakes) |
+| C# lines in `src/` (without migrations) | about 1,010 in 24 files | about 1,600 in 29 files |
 | Schema | 4 tables | **the same** 4 tables |
 
 The code grew by more than half. That is the honest cost, paid in mapping (value converters, response mapping, commands), in ports and in small classes.

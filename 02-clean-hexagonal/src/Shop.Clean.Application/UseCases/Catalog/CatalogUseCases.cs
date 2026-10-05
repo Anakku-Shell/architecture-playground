@@ -20,7 +20,7 @@ public sealed partial class CreateProduct(IProductRepository products, IUnitOfWo
         var errors = new ValidationErrors();
         var name = errors.Capture("name", () => ProductName.Of(command.Name));
         var sku = errors.Capture("sku", () => Sku.Of(command.Sku));
-        var price = errors.Capture("price", () => Money.Of(command.Price));
+        var price = errors.Capture("price", () => Product.ValidPrice(command.Price));
         errors.ThrowIfAny();
         var product = errors.Capture("initialStock", () => Product.Create(Guid.CreateVersion7(), name, sku, price, command.InitialStock));
         errors.ThrowIfAny();
@@ -70,7 +70,7 @@ public sealed class ChangeProductPrice(IProductRepository products, IUnitOfWork 
     {
         ArgumentNullException.ThrowIfNull(command);
         var errors = new ValidationErrors();
-        var price = errors.Capture("price", () => Money.Of(command.Price));
+        var price = errors.Capture("price", () => Product.ValidPrice(command.Price));
         errors.ThrowIfAny();
 
         return await ConcurrencyRetry.ExecuteAsync(unitOfWork, async () =>
@@ -90,12 +90,9 @@ public sealed class AdjustStock(IProductRepository products, IUnitOfWork unitOfW
     public async Task<Product> ExecuteAsync(AdjustStockCommand command, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(command);
-        if (command.Quantity == 0)
-        {
-            var errors = new ValidationErrors();
-            errors.Add("quantity", "Quantity must not be zero.");
-            errors.ThrowIfAny();
-        }
+        var errors = new ValidationErrors();
+        errors.Check("quantity", () => Product.EnsureValidAdjustment(command.Quantity));
+        errors.ThrowIfAny();
 
         // Product.AdjustStock decides; "below zero" comes back as a BusinessRuleViolationException (409).
         return await ConcurrencyRetry.ExecuteAsync(unitOfWork, async () =>

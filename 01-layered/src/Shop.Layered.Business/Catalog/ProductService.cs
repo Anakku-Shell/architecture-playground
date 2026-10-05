@@ -30,9 +30,9 @@ public sealed partial class ProductService(ShopDbContext db, ILogger<ProductServ
         }
 
         AddPriceErrors(price, errors);
-        if (initialStock < 0)
+        if (initialStock is < 0 or > CatalogLimits.MaxStock)
         {
-            errors["initialStock"] = ["Initial stock cannot be negative."];
+            errors["initialStock"] = [$"Initial stock must be between 0 and {CatalogLimits.MaxStock}."];
         }
 
         if (errors.Count > 0)
@@ -83,24 +83,24 @@ public sealed partial class ProductService(ShopDbContext db, ILogger<ProductServ
         return product;
     }
 
-    /// <summary>Adds (positive) or removes (negative) units. The result can never go below zero.</summary>
+    /// <summary>Adds (positive) or removes (negative) units. The result stays between 0 and the maximum stock.</summary>
     public async Task<Product> AdjustStockAsync(Guid id, int quantity, CancellationToken cancellationToken)
     {
-        if (quantity == 0)
+        if (quantity == 0 || Math.Abs((long)quantity) > CatalogLimits.MaxAdjustment)
         {
-            throw new ValidationException("quantity", "Quantity must not be zero.");
+            throw new ValidationException("quantity", $"Quantity must not be zero and at most {CatalogLimits.MaxAdjustment} units either way.");
         }
 
         // One conditional UPDATE instead of read-check-write: the database applies the check and the
         // change atomically, so a concurrent order cannot slip in between. Guide: §4.5, step 7.
         var updated = await db.Products
-            .Where(p => p.Id == id && p.Stock + quantity >= 0)
+            .Where(p => p.Id == id && p.Stock + quantity >= 0 && p.Stock + quantity <= CatalogLimits.MaxStock)
             .ExecuteUpdateAsync(set => set.SetProperty(p => p.Stock, p => p.Stock + quantity), cancellationToken);
         if (updated == 0)
         {
             var exists = await db.Products.AnyAsync(p => p.Id == id, cancellationToken);
             throw exists
-                ? new BusinessRuleException($"Stock of product {id} cannot go below zero.")
+                ? new BusinessRuleException($"Stock of product {id} must stay between 0 and {CatalogLimits.MaxStock}.")
                 : NotFound(id);
         }
 
@@ -129,7 +129,11 @@ public sealed partial class ProductService(ShopDbContext db, ILogger<ProductServ
         return true;
     }
 
-    /// <summary>Gives back the units of every line (an order was cancelled). Runs in the caller's transaction.</summary>
+    /// <summary>
+    /// Gives back the units of every line (an order was cancelled). Runs in the caller's transaction. Never
+    /// refused: returning units may end slightly above the maximum stock, which caps what is added, not
+    /// what comes back (at most 1000 units per line, so no overflow is possible).
+    /// </summary>
     public async Task ReleaseStockAsync(IEnumerable<(Guid ProductId, int Quantity)> lines, CancellationToken cancellationToken)
     {
         foreach (var (productId, quantity) in lines.OrderBy(l => l.ProductId))
@@ -142,9 +146,9 @@ public sealed partial class ProductService(ShopDbContext db, ILogger<ProductServ
 
     private static void AddPriceErrors(decimal price, Dictionary<string, string[]> errors)
     {
-        if (price <= 0)
+        if (price is <= 0 or > CatalogLimits.MaxPrice)
         {
-            errors["price"] = ["Price must be greater than zero."];
+            errors["price"] = [$"Price must be greater than zero and at most {CatalogLimits.MaxPrice:0.00}."];
         }
         else if (!PriceRules.HasAtMostTwoDecimals(price))
         {

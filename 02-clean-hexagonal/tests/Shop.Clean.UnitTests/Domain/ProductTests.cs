@@ -49,6 +49,33 @@ public sealed class ProductTests
         Assert.Throws<DomainValidationException>(() => Products.Mug().AdjustStock(0));
 
     [Fact]
+    public void Limits_PriceAndInitialStock()
+    {
+        Assert.Equal(Money.Of(1_000_000m), Product.ValidPrice(1_000_000m));
+        Assert.Throws<DomainValidationException>(() => Product.ValidPrice(1_000_000.01m));
+        Assert.Throws<DomainValidationException>(() => Product.ValidPrice(0m));
+        Assert.Throws<DomainValidationException>(() => Product.Create(Guid.NewGuid(), ProductName.Of("Mug"), Sku.Of("m"), Money.Of(1m), Product.MaxStock + 1));
+        Assert.Throws<DomainValidationException>(() => Products.Mug().ChangePrice(Money.Of(1_000_000.01m)));
+    }
+
+    [Theory]
+    [InlineData(Product.MaxAdjustment + 1)]
+    [InlineData(-Product.MaxAdjustment - 1)]
+    [InlineData(int.MaxValue)]
+    [InlineData(int.MinValue)]
+    public void AdjustStock_ByMoreThanTheMaximumAdjustment_IsInvalid(int quantity) =>
+        Assert.Throws<DomainValidationException>(() => Products.Mug(stock: 5).AdjustStock(quantity));
+
+    [Fact]
+    public void AdjustStock_AboveTheMaximumStock_IsABusinessRuleViolation_AndChangesNothing()
+    {
+        var product = Products.Mug(stock: Product.MaxStock - 1);
+
+        Assert.Throws<BusinessRuleViolationException>(() => product.AdjustStock(2));
+        Assert.Equal(Product.MaxStock - 1, product.Stock);
+    }
+
+    [Fact]
     public void Reserve_TakesUnits_Release_GivesThemBack()
     {
         var product = Products.Mug(stock: 5);
