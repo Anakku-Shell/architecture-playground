@@ -76,7 +76,17 @@ This guide goes with the code. It explains software architecture from zero. Ever
    7. [What changed from version 03](#77-what-changed-from-version-03)
    8. [Trade-offs](#78-trade-offs)
    9. [Interview questions](#79-interview-questions)
-8. Microservices — *coming in phase 05*
+8. [Microservices](#8-microservices)
+   1. [The idea](#81-the-idea)
+   2. [Services and their responsibilities](#82-services-and-their-responsibilities)
+   3. [Running and watching it with Aspire](#83-running-and-watching-it-with-aspire)
+   4. [Messaging done safely: broker, outbox, inbox](#84-messaging-done-safely-broker-outbox-inbox)
+   5. [The saga: orchestration and compensation](#85-the-saga-orchestration-and-compensation)
+   6. [Journey of a request](#86-journey-of-a-request)
+   7. [Rules](#87-rules)
+   8. [What changed from version 04](#88-what-changed-from-version-04)
+   9. [Trade-offs](#89-trade-offs)
+   10. [Interview questions](#810-interview-questions)
 9. Combining styles — *coming in phase 06*
 10. Decision guide — *coming in phase 06*
 11. Styles explained but not implemented — *coming in phase 06*
@@ -165,7 +175,7 @@ Docker Desktop must be **running** (whale icon in the system tray) before you st
 
 With Aspire, one project, the **AppHost**, describes the whole system in C#: "a PostgreSQL with three databases, a RabbitMQ, these three services, this gateway, and who talks to whom". `dotnet run` on the AppHost starts everything and opens the **Aspire dashboard**: logs, traces and metrics of every process in one place. There you can see one order travel through the services.
 
-Aspire comes as NuGet packages (`Aspire.AppHost.Sdk`, `Aspire.Hosting.*`), so **nothing extra needs installing**. The optional **Aspire CLI** (`aspire run`, `aspire new`) is a convenience; chapter 8 shows how to install it if you want it.
+Aspire comes as NuGet packages (`Aspire.AppHost.Sdk`, `Aspire.Hosting.*`), so **nothing extra needs installing**. The optional **Aspire CLI** (`aspire run`, `aspire new`) is a convenience; §8.3 says where to get it if you want it.
 
 ### 1.5 Everyday commands
 
@@ -588,7 +598,7 @@ In 01–03, "reserve stock + save the order" is one transaction in one database.
 
 Once data lives in **different databases owned by different services** (05), no single transaction covers them. You accept **eventual consistency** instead: for a short time the parts may disagree (the order says `Pending` while Catalog already reserved the stock), but they converge once all messages are processed. A **saga** coordinates such a multi-step process as a sequence of local transactions. When a later step fails, it runs **compensating actions**: if the payment is declined, it *releases* the stock reserved earlier.
 
-**Concurrency** is the other half of consistency: two requests changing the same data at once. Two customers ordering the last unit must never both get it. Every version handles this, either with **optimistic concurrency** (each row carries a version; a save fails if someone changed the row in the meantime, and the code retries) or with a **conditional update** (`UPDATE … SET stock = stock - 1 WHERE stock >= 1`). The contract test `ConcurrentOrdersForLastUnits_NeverOversell` checks it for all five versions.
+**Concurrency** is the other half of consistency: two requests changing the same data at once. Two customers ordering the last unit must never both get it. Every version handles this, with **optimistic concurrency** (each row carries a version; a save fails if someone changed the row in the meantime, and the code retries), a **conditional update** (`UPDATE … SET stock = stock - 1 WHERE stock >= 1`) or **pessimistic locking** (lock the row first, `SELECT … FOR UPDATE`; versions 04 and 05). §7.5 compares them. The contract test `ConcurrentOrdersForLastUnits_NeverOversell` checks it for all five versions.
 
 ### 3.11 The shop we build five times
 
@@ -1977,40 +1987,594 @@ What moved where:
 
 ---
 
+## 8. Microservices
+
+Code: [`05-microservices/`](../05-microservices/README.md). Decisions: [ADR 0001](../05-microservices/docs/adr/0001-microservices.md), [ADR 0002](../05-microservices/docs/adr/0002-database-per-service.md), [ADR 0003](../05-microservices/docs/adr/0003-orchestrated-saga.md), [ADR 0004](../05-microservices/docs/adr/0004-outbox-and-inbox.md), [ADR 0005](../05-microservices/docs/adr/0005-api-gateway.md), [ADR 0006](../05-microservices/docs/adr/0006-sync-price-lookup.md).
+
+### 8.1 The idea
+
+Version 04 drew walls inside one process. **Microservices** move each module into a process of its own: Catalog, Ordering and Payments become three **services**, each with its own database, deployed and scaled on its own, talking over the network. A fourth process, the **API gateway**, gives clients one address and the same API as before.
+
+Why would anyone do that? Not for cleaner code: 04 already had that. The reasons are about **independence at run time and in the organisation**:
+
+- **deploy one part** without redeploying the rest (a fix in Payments ships today, whatever Ordering is doing);
+- **scale one part** (ten Catalog instances for a sale, one Payments instance);
+- **isolate failures** (if Payments is down, products can still be browsed);
+- **let teams own services end to end**, including their technology and release rhythm.
+
+The price is that the network becomes part of every business operation. A method call that could not fail becomes a message that can be lost, delivered twice, delivered late or delivered out of order, and a database transaction that covered everything is gone. Almost everything new in this version exists to pay that price safely:
+
+| Problem (new in 05) | What it looks like | The answer here |
+|---|---|---|
+| **Dual write** (§3.9) | The order is saved, then the process dies before the message is sent: the order waits forever | **Transactional outbox** (§8.4) |
+| **Duplicate delivery** | The broker delivers `ReserveStock` twice: stock taken twice | **Idempotent inbox** (§8.4) |
+| **No shared transaction** | Payment declined after the stock was reserved in another database: no rollback can reach it | **Saga** with a **compensating action** (§8.5) |
+| **Partial failure** | Catalog is slow or down while an order is placed | Timeouts, retries, circuit breaker, a clear `503` (§8.6) |
+| **Seeing what happened** | One order touches four processes, three databases and a broker | **Distributed tracing** in the Aspire dashboard (§8.3) |
+
+**Analogy.** The three companies of §7.1 move to three buildings in different towns. Each keeps its own files, so nobody can walk into another's archive. Internal mail becomes the postal service: letters take time, sometimes arrive twice, and a company can be closed when you write. So every company keeps a register of letters already answered (the inbox), writes the letter in the same ledger entry as the decision (the outbox), and one company acts as the coordinator that follows each order to the end and sends "please undo" letters when a later step fails (the saga).
+
+**Inside, nothing changed.** Each service keeps the style its 04 module had: Catalog is CRUD, Ordering is clean/hexagonal with a rich domain, Payments is vertical slices. A microservice is a **deployment** boundary, not an internal architecture (§3.2): "microservices" answers *where the code runs*, not *how a service is written*.
+
+### 8.2 Services and their responsibilities
+
+**Who references whom** (project references). The arrows that are missing are the point: no service references another.
+
+```mermaid
+flowchart TD
+    AH["AppHost (Aspire)<br/>starts everything, references nothing at run time"]
+    GW["Gateway (YARP)"]
+    subgraph catalog["Catalog service (CRUD)"]
+        C["Catalog.Api"]
+    end
+    subgraph ordering["Ordering service (Clean + DDD)"]
+        OA["Ordering.Api"]
+        OI["Ordering.Infrastructure"]
+        OAP["Ordering.Application"]
+        OD["Ordering.Domain"]
+    end
+    subgraph payments["Payments service (vertical slices)"]
+        P["Payments.Api"]
+    end
+    subgraph shared["Shared by every service"]
+        CT["Contracts<br/>messages, ProductSnapshot"]
+        M["Messaging<br/>outbox, inbox, RabbitMQ"]
+        SD["ServiceDefaults<br/>telemetry, health, discovery, resilience"]
+    end
+    AH -.runs.-> GW
+    AH -.runs.-> C
+    AH -.runs.-> OA
+    AH -.runs.-> P
+    GW --> SD
+    C --> M
+    C --> SD
+    C --> CT
+    OA --> OI
+    OA --> SD
+    OI --> OAP
+    OI --> M
+    OAP --> OD
+    OAP --> CT
+    P --> M
+    P --> SD
+    P --> CT
+    M --> CT
+```
+
+```
+src/
+  Shop.Micro.AppHost/                 Program.cs: PostgreSQL (3 databases), RabbitMQ, the services, the gateway
+  Shop.Micro.ServiceDefaults/         AddServiceDefaults (OpenTelemetry, health checks, service discovery, resilience),
+                                      BackgroundPollingSampler
+  Shop.Micro.Gateway/                 Program.cs: YARP routes /api/products, /api/orders, /api/payments
+  Shop.Micro.Contracts/               IIntegrationMessage; CatalogContracts (ReserveStock, ReleaseStock, StockReserved,
+                                      StockReservationFailed, OrderedItem, ProductSnapshot); PaymentsContracts
+  Shop.Micro.Messaging/               IMessageOutbox, IMessageConsumer<T>, outbox/inbox tables, OutboxDispatcher,
+                                      RabbitMqConsumerHost, Topology, tracing
+  Shop.Micro.Catalog.Api/             Program.cs, Products/ (endpoints, rules, snapshots), Stock/ (consumers), Data/, Errors/
+  Shop.Micro.Ordering.Domain/         Order (with PaymentPending), OrderLine, value objects
+  Shop.Micro.Ordering.Application/    Ports/, UseCases/ (PlaceOrder, PayOrder, CancelOrder, GetOrder), Sagas/OrderSaga, Common/
+  Shop.Micro.Ordering.Infrastructure/ Persistence/ (DbContext, adapters), Catalog/CatalogHttpClient, Messaging/ (consumers)
+  Shop.Micro.Ordering.Api/            Program.cs, Http/ (endpoints, error handler)
+  Shop.Micro.Payments.Api/            Program.cs, Features/ (ProcessPayment, GetPayment), Data/, FakePaymentGateway, Errors/
+```
+
+| Part | Responsibility | May know | Must NOT know | Example file |
+|---|---|---|---|---|
+| **AppHost** | Describes the system for development: containers, databases, services, who references whom, start order | The projects it runs (as names and addresses) | Nothing at run time: it is not deployed | [`Program.cs`](../05-microservices/src/Shop.Micro.AppHost/Program.cs) |
+| **Gateway** | One entry point: forwards each path prefix to the service that owns it | ServiceDefaults | Any service's code; any business rule | [`Program.cs`](../05-microservices/src/Shop.Micro.Gateway/Program.cs) |
+| **ServiceDefaults** | Hosting concerns every process shares: telemetry, health endpoints, service discovery, HTTP resilience | ASP.NET Core, OpenTelemetry | Any service, any message | [`ServiceDefaultsExtensions.cs`](../05-microservices/src/Shop.Micro.ServiceDefaults/ServiceDefaultsExtensions.cs) |
+| **Contracts** | The messages and the one HTTP shape another service reads | Nothing (base library only) | Any framework, any service | [`CatalogContracts.cs`](../05-microservices/src/Shop.Micro.Contracts/CatalogContracts.cs) |
+| **Messaging** | Sending and receiving safely: outbox, dispatcher, inbox, consumer host, queue layout, trace propagation | EF Core, RabbitMQ.Client, Contracts' marker interface | Which messages exist, any service | [`Outbox.cs`](../05-microservices/src/Shop.Micro.Messaging/Outbox.cs) |
+| **Catalog** (CRUD) | Products and stock over HTTP; reserves and releases stock on command; answers price lookups | Contracts, Messaging, ServiceDefaults | Other services' code or databases | [`StockConsumers.cs`](../05-microservices/src/Shop.Micro.Catalog.Api/Stock/StockConsumers.cs) |
+| **Ordering.Domain** | The `Order` aggregate, now with `PaymentPending` | Nothing | Everything else | [`Order.cs`](../05-microservices/src/Shop.Micro.Ordering.Domain/Order.cs) |
+| **Ordering.Application** | Use cases, the saga, the ports (`IOrderRepository`, `IUnitOfWork`, `IOutgoingMessages`, `ICatalogClient`) | Domain, Contracts | EF Core, ASP.NET Core, RabbitMQ, Messaging | [`OrderSaga.cs`](../05-microservices/src/Shop.Micro.Ordering.Application/Sagas/OrderSaga.cs) |
+| **Ordering.Infrastructure** | The adapters: EF Core, the outbox, the Catalog HTTP client, the message consumers that drive the saga | Application, Messaging | Other services' code | [`CatalogHttpClient.cs`](../05-microservices/src/Shop.Micro.Ordering.Infrastructure/Catalog/CatalogHttpClient.cs) |
+| **Ordering.Api** | The HTTP adapter and the service's composition root | Infrastructure, ServiceDefaults | Other services | [`OrderEndpoints.cs`](../05-microservices/src/Shop.Micro.Ordering.Api/Http/OrderEndpoints.cs) |
+| **Payments** (slices) | Charges orders on command (once per order) and serves payment reads | Contracts, Messaging, ServiceDefaults | Other services' code or databases | [`ProcessPayment.cs`](../05-microservices/src/Shop.Micro.Payments.Api/Features/ProcessPayment.cs) |
+
+**What the services share, and why so little.** Only three projects: Contracts (the messages: two services must agree on them anyway), Messaging and ServiceDefaults (plumbing with no business meaning). Version 04's `BuildingBlocks` also held the error types (`ValidationException`…) and a ProblemDetails handler; here **each service has its own small copy** ([Catalog's](../05-microservices/src/Shop.Micro.Catalog.Api/Errors/ErrorHandling.cs)). Sharing them would mean that changing an error type forces every service to rebuild and redeploy, which is the coupling microservices exist to remove. The usual advice is "don't share business code between services; share libraries only like you would share a public NuGet package", and a little duplication is the accepted price.
+
+**Data shapes at each boundary** for `POST /api/orders`:
+
+| Boundary | Type | Defined in | Why a separate type |
+|---|---|---|---|
+| Client → gateway → Ordering | JSON → `PlaceOrderRequest` | `Ordering.Api/Http` | The public JSON contract, unchanged since 01 |
+| Adapter → use case | `PlaceOrderCommand` | `Ordering.Application` | Free of HTTP |
+| Ordering asks Catalog (HTTP) | `GET /internal/product-snapshots?ids=…` → `ProductSnapshot[]` | `Contracts` | Was `ICatalogQueries` in 04: the same question, now over the network |
+| Use case ↔ domain | `Order`, `OrderLine`, value objects | `Ordering.Domain` | The rules |
+| Ordering → outbox row → broker | `ReserveStock(OrderId, Items)` as JSON in `outbox_messages.Payload`, then an AMQP message | `Contracts`; `Messaging` | Ids and numbers only: the receiver may be written, deployed and versioned separately |
+| Catalog → broker → Ordering | `StockReserved(OrderId)` / `StockReservationFailed(OrderId)` | `Contracts` | Answers |
+| Use case → adapter → client | `Order` → `OrderResponse` with `status: "Pending"` | `Ordering.Api/Http` | The response describes what is known *now* |
+
+**The databases.** One PostgreSQL **server** for convenience (the AppHost starts one container) with **one database per service**: `catalogdb`, `orderingdb`, `paymentsdb`. That is the pattern called **database per service** (ADR 0002). A service's tables are reachable only through that service's API or messages: PostgreSQL cannot even join tables across databases, so the boundary of 04's schemas is now a hard one. Read from the databases (`information_schema`):
+
+`catalogdb` (Catalog service):
+
+```mermaid
+erDiagram
+    products {
+        uuid Id PK
+        varchar_200 Name
+        varchar_50 Sku UK "unique, stored upper-case"
+        numeric_18_2 Price
+        integer Stock
+    }
+    outbox_messages {
+        uuid Id PK "also the message id"
+        varchar_200 Type "message type = routing key"
+        jsonb Payload
+        timestamptz OccurredAt
+        varchar_100 TraceParent "nullable"
+        timestamptz SentAt "null until published"
+        integer Attempts "refused publishes"
+        varchar_500 LastError "nullable"
+    }
+    inbox_messages {
+        uuid MessageId PK "handled once"
+        varchar_200 Type
+        timestamptz ProcessedAt
+    }
+```
+
+`orderingdb` (Ordering service):
+
+```mermaid
+erDiagram
+    orders ||--|{ order_lines : "has"
+    orders {
+        uuid Id PK
+        uuid CustomerId
+        varchar_30 Status "now also PaymentPending"
+        varchar_30 CancellationReason "nullable"
+        numeric_18_2 Total
+        timestamptz PlacedAt
+        xid xmin "system column, row version"
+    }
+    order_lines {
+        uuid Id PK
+        uuid OrderId FK
+        integer LineNumber
+        uuid ProductId "a product in catalogdb, by value"
+        varchar_200 ProductName "snapshot"
+        numeric_18_2 UnitPrice "snapshot"
+        integer Quantity
+        numeric_18_2 LineTotal
+    }
+    outbox_messages {
+        uuid Id PK
+        varchar_200 Type
+        jsonb Payload
+        timestamptz OccurredAt
+        varchar_100 TraceParent
+        timestamptz SentAt
+        integer Attempts
+        varchar_500 LastError
+    }
+    inbox_messages {
+        uuid MessageId PK
+        varchar_200 Type
+        timestamptz ProcessedAt
+    }
+```
+
+`paymentsdb` (Payments service):
+
+```mermaid
+erDiagram
+    payments {
+        uuid Id PK
+        uuid OrderId UK "one payment per order; an order in orderingdb"
+        numeric_18_2 Amount
+        varchar_30 Status "Approved or Declined"
+        timestamptz ProcessedAt
+    }
+    outbox_messages {
+        uuid Id PK
+        varchar_200 Type
+        jsonb Payload
+        timestamptz OccurredAt
+        varchar_100 TraceParent
+        timestamptz SentAt
+        integer Attempts
+        varchar_500 LastError
+    }
+    inbox_messages {
+        uuid MessageId PK
+        varchar_200 Type
+        timestamptz ProcessedAt
+    }
+```
+
+What changed from 04's schemas:
+
+- **Three databases instead of three schemas**, each with its own `__EFMigrationsHistory`, migrated by its own service at startup (Development only).
+- **`outbox_messages` and `inbox_messages` in every database.** They must live next to the business tables, because the whole point is to write them in the same local transaction (§8.4). The partial index `IX_outbox_messages_OccurredAt … WHERE "SentAt" IS NULL` keeps the dispatcher's query cheap however many sent rows accumulate.
+- **`xmin` is back on `orders`** (as in 02): 05 uses optimistic concurrency again, because a row lock cannot be held across services and messages (§8.6).
+- **The `Status` column has one more value**, `PaymentPending`.
+
+To inspect it: `scripts/create-schemas.sh 05` writes one SQL file per service database; while the AppHost runs, the dashboard shows the PostgreSQL container's connection details, and `docker exec -it <postgres container> psql -U postgres -d orderingdb -c '\d+ orders'` shows one table (`docker ps` lists the container names Aspire chose).
+
+### 8.3 Running and watching it with Aspire
+
+```bash
+dotnet run --project 05-microservices/src/Shop.Micro.AppHost     # gateway on http://localhost:5105, dashboard link in the console
+dotnet test 05-microservices/Shop.slnx
+```
+
+Docker Desktop must be running; the root `compose.yaml` database is not used (the AppHost starts its own PostgreSQL and RabbitMQ containers). The console prints a dashboard login link (`http://localhost:15105/login?t=…`). The services listen on 5106 (catalog), 5107 (ordering) and 5108 (payments), but clients use only the gateway. If you want the optional **Aspire CLI** (`aspire run` instead of `dotnet run`, templates, a nicer console), install it yourself following aspire.dev; the AppHost suppresses warning `ASPIRE010`, which only says that some CLI features are unavailable without it. On a first start each service logs one EF Core `fail` while it looks for a migrations history table that does not exist yet (the red badge in the dashboard): harmless, as in 04. If the PostgreSQL and RabbitMQ containers are still running after you stop the AppHost (`docker ps`), remove them by name with `docker rm -f`; killing the process, as the trial runs of this chapter did, left them behind.
+
+**The AppHost** ([`Program.cs`](../05-microservices/src/Shop.Micro.AppHost/Program.cs)) is the whole system in about 30 lines of C#. `AddPostgres` and `AddDatabase` declare a container and three databases; `AddRabbitMQ` a broker with its management UI; `AddProject` each service. `WithReference(x)` gives a service the connection string or address of `x` (as environment variables such as `ConnectionStrings__orderingdb` and `services__catalog__http__0`), and `WaitFor(x)` delays its start until `x` is healthy. It is a **development** tool: in production each service is deployed by its own pipeline (Aspire can also generate deployment manifests, which this playground does not use).
+
+**ServiceDefaults** ([`ServiceDefaultsExtensions.cs`](../05-microservices/src/Shop.Micro.ServiceDefaults/ServiceDefaultsExtensions.cs)) is what every process calls first (`builder.AddServiceDefaults()`):
+
+- **OpenTelemetry**, the vendor-neutral standard for logs, metrics and traces, exported to the dashboard;
+- **health checks**: `/alive` (the process runs) and `/health` (every check passes: the database answers and, through Messaging, the service's queue is being consumed);
+- **service discovery**: `http://catalog` in an `HttpClient` or a YARP destination is resolved to the address the AppHost gave the catalog service;
+- **resilience** on every `HttpClient`: retries with back-off, a per-attempt timeout, a **circuit breaker** (after repeated failures, stop calling for a while and fail fast), from `Microsoft.Extensions.Http.Resilience`. The standard breaker only trips under sustained load (at least 100 calls in 30 seconds, mostly failing): placing a few orders by hand never opens it.
+
+**Reading one order in the dashboard.** Open *Traces* (*Seguimientos* in a Spanish UI). Each row is a **trace**: everything that happened because of one request, across all processes. Each trace is a tree of **spans** (one timed operation: an HTTP call, a query, a publish). The link between processes is the **W3C Trace Context**, a `traceparent` value such as `00-<trace id>-<span id>-01`: ASP.NET Core and `HttpClient` carry it in an HTTP header automatically; Messaging carries it in the outbox row and then in an AMQP header ([`MessagingTracing`](../05-microservices/src/Shop.Micro.Messaging/MessageTypes.cs)). Paying an order whose payment is declined gives one trace with 7 resources:
+
+```
+gateway   POST /api/orders/{**rest}                        ~12 ms   ← the client already has its 202 here
+ordering    POST /api/orders/{id:guid}/pay                         SELECT order, UPDATE order + INSERT outbox row
+ordering      ProcessPayment publish                               (the dispatcher, after the commit)
+payments        ProcessPayment process                             inbox check, charge, INSERT payment + outbox
+payments          PaymentDeclined publish
+ordering            PaymentDeclined process                        saga: Cancelled, outbox ReleaseStock
+ordering              ReleaseStock publish
+catalog                 ReleaseStock process                       UPDATE products (the compensation)
+                                                          ~370 ms   ← the trace ends here
+```
+
+The shape *is* the lesson: the HTTP request ended after about 12 ms, and the business operation went on for another third of a second in three other processes. (The dashboard labels message spans by their messaging attributes, `rabbitmq shop` for a publish and `rabbitmq <queue>` for a process; click one to see the message type and id.) [`BackgroundPollingSampler`](../05-microservices/src/Shop.Micro.ServiceDefaults/BackgroundPollingSampler.cs) keeps the list readable: without it, the outbox dispatchers' polling queries and the health probes' queries showed up as more than a hundred one-span traces within a minute.
+
+The **RabbitMQ management UI** is linked from the dashboard's *Resources* page (its user name and generated password are in the `messaging` resource's details): it shows the exchange `shop`, the queues `catalog`, `ordering`, `payments` and their `.dead-letter` queues, and the message rates.
+
+**Try this**
+
+- **Watch the 202.** Send `POST /api/orders` from [`http/shop.http`](../http/shop.http) with `@baseUrl = {{micro}}`: the response says `Pending`; a `GET` a moment later says `AwaitingPayment`. Pay, and `PaymentPending` comes before `Paid`. Pay twice quickly: the second answers `409`.
+- **Stop Catalog.** In the dashboard's *Resources* page, stop `catalog` and place an order. Ordering's client retries until its 5-second timeout, then Ordering answers `503` (about 5 s in the trial run), and the order was not created. Restart it: everything works again.
+- **Stop Payments, then pay.** The order stays `PaymentPending`; the `ProcessPayment` message waits in the `payments` queue (management UI). Start Payments again: the message is handled and the order becomes `Paid`. Nothing was lost, because the message was in the broker, not in memory. Meanwhile `GET /api/payments` through the gateway answers `504 Gateway Timeout` after 10 seconds: the gateway does not wait forever for a service that does not answer.
+- **Break a rule.** Add a project reference from `Shop.Micro.Payments.Api` to `Shop.Micro.Catalog.Api`: `Services_DoNotReferenceEachOther` and `Services_ShareOnlyContractsMessagingAndServiceDefaults` both fail and name it.
+- **Remove the lock, and see nothing break.** Delete `FOR UPDATE` from [`ReserveStockConsumer`](../05-microservices/src/Shop.Micro.Catalog.Api/Stock/StockConsumers.cs): `ConcurrentOrdersForLastUnits_NeverOversell` still passes. One Catalog instance handles its queue one message at a time, so the queue itself serialises the reservations. The lock is for the day there are two instances (or an HTTP stock adjustment arriving at the same moment): compare 04, where removing it made the test fail at once (§7.5). A test passing does not prove a mechanism is unnecessary.
+
+### 8.4 Messaging done safely: broker, outbox, inbox
+
+**The broker.** RabbitMQ is a **message broker** (§3.9): services hand it messages and it stores and delivers them, so sender and receiver need not be running at the same time. The layout is in one file, [`Topology.cs`](../05-microservices/src/Shop.Micro.Messaging/Topology.cs):
+
+- one **exchange** named `shop`, of type **topic**. An exchange receives every published message and routes it by its **routing key**, here the message type name (`ReserveStock`);
+- one **queue** per service (`catalog`, `ordering`, `payments`), **bound** to the routing keys that service consumes. A command (`ReserveStock`) has one binding, its receiver; an event could have several. Several instances of one service share its queue and split its messages (**competing consumers**);
+- the queues are **quorum queues** (replicated, the recommended durable type). A message that keeps failing goes, after 5 attempts, to the queue's **dead-letter queue** (`catalog.dead-letter`…) instead of being retried forever. A message that can never succeed (a **poison message**) would otherwise block the queue and burn CPU. The attempts are counted by the consumer host, in an `x-attempt` header, not by RabbitMQ: the first version relied on the queue's own `x-delivery-limit`, which worked on RabbitMQ 4.1 and silently stopped working on 4.3 (the version Aspire starts), where a message the consumer returns with a nack is not counted. `InboxTests.FailedMessage_IsRetriedThenDeadLettered` caught it: 6,892 attempts in 30 seconds and no dead letter. `x-delivery-limit` stays as a backstop for messages the broker takes back by itself (a consumer that crashes mid-message).
+
+**The transactional outbox** solves the dual write (§3.9, §7.3). A use case never talks to RabbitMQ. It calls `IMessageOutbox.Add(message)` ([`EfMessageOutbox`](../05-microservices/src/Shop.Micro.Messaging/Outbox.cs)), which only adds an `outbox_messages` row to the service's DbContext. The next `SaveChanges` writes the order and the row in **one local transaction**: both or neither. A background service, the **outbox dispatcher** (also called *relay* or *message relay*), then publishes what was committed:
+
+1. It wakes up when a transaction commits (an EF Core interceptor, `OutboxSignalInterceptor`, signals it) or every 5 seconds as a fallback.
+2. In a transaction, it reads up to 50 unsent rows, oldest first, with `SELECT … FOR UPDATE SKIP LOCKED`. **`SKIP LOCKED`** makes a second instance of the service skip rows the first is already sending, instead of waiting for them or sending them too.
+3. It publishes each row with **publisher confirms** (the broker acknowledges that it has stored the message) and `mandatory` (the broker refuses a message no queue is bound to, instead of dropping it silently).
+4. It sets `SentAt` and commits. Two kinds of failure are treated differently. If the broker refuses **one message** (no queue is bound to its type, or a nack), the row's `Attempts` grows, `LastError` records why, and the dispatcher goes on with the next row: retrying the refused row first every time would hold back every message behind it (**head-of-line blocking**). After 5 refusals the row is skipped for good and waits, unsent, for a person. If the broker or the connection is down, nothing can be sent: the dispatcher records what it sent, stops and tries again later without counting it against the rows (otherwise a short outage would park every message). `OutboxTests.UnroutableMessage_DoesNotBlockTheOthers` pins the first case; the first version stopped at the first failure, and that test timed out against it. Order is therefore kept only per row, not across rows; the saga never depends on the order of messages about different orders.
+
+The outbox moves the problem; it does not make it vanish. If the dispatcher dies between step 3 and step 4, the row is published again on the next run. Delivery is therefore **at least once**, never "exactly once".
+
+**The idempotent inbox** makes "at least once" harmless. [`RabbitMqConsumerHost`](../05-microservices/src/Shop.Micro.Messaging/Inbox.cs) handles each delivery in one local transaction:
+
+1. `BEGIN`; if `inbox_messages` already has this message id, end the transaction (nothing to write), **acknowledge** (tell the broker it can forget the message) and stop: a duplicate.
+2. Insert the inbox row, run the service's consumer (its writes and the messages it sends through the outbox, all in this transaction), `SaveChanges`, `COMMIT`.
+3. Acknowledge. If the process dies before this line, the broker redelivers, and step 1 recognises the message.
+4. On any exception: roll back (no inbox row, no business change, no outgoing message). If this was not yet the fifth attempt, wait a little (200 ms × attempt), publish a copy back to the queue with the next attempt number, and acknowledge the original; otherwise **reject** it without requeue, which sends it to the dead-letter queue. (An ack tells the broker the message is handled; a **nack** or reject says it failed.)
+
+`InboxTests.DuplicateMessage_IsHandledOnce` publishes the same message id twice and checks that the consumer ran once and its row was written once. Two copies handled at the very same moment both pass step 1, and the inbox's primary key stops the second at commit. Its redelivery is then a recognised duplicate. **"Exactly once" is not something the broker gives; it is what the outbox plus an idempotent consumer achieve together** (often called *effectively once*).
+
+Two kinds of duplicates need two defences. The inbox catches the *same message* delivered twice. A *second message with the same meaning* (a new id) needs a business-level check: Payments refuses to charge an order that already has a payment, and the saga ignores replies that do not fit the order's state (§8.5).
+
+**Readiness.** A message published to an exchange with no matching queue is refused (`mandatory`), and the dispatcher keeps it and retries. To avoid that at startup, each service reports itself healthy only once its queue is declared and consumed (`MessagingHealthCheck`), and the AppHost starts the gateway only after all three services are healthy.
+
+**What this playground leaves out.** Retries wait inside the consumer, which handles one message at a time, so a failing message delays the rest of its service's queue (about 2 seconds over its 5 attempts); a separate delay queue would avoid that. Sent outbox rows and inbox rows are never deleted (a scheduled job would delete them after a few days); messages are not versioned (adding an optional field is safe, renaming a type is a breaking change because the name is the routing key); there is no replay tooling for dead letters (the management UI can move them by hand). A library such as MassTransit or Wolverine provides all of this; it is hand-written here so the mechanics are visible, and the guide's advice for production is to use one (§8.9).
+
+### 8.5 The saga: orchestration and compensation
+
+A **saga** (§3.10) replaces one database transaction with a sequence of **local transactions**, one per service, linked by messages. When a later step fails, the earlier ones cannot be rolled back, because they are already committed in other databases. Instead the saga runs **compensating actions**: new transactions that undo the effect in business terms ("give the units back"), not technically ("restore the old row").
+
+There are two ways to coordinate one:
+
+- **Choreography**: each service reacts to the others' events and publishes its own; nobody holds the whole picture. Version 04's in-process events were choreography (`OrderPlaced` → Catalog reacted → `StockReserved`).
+- **Orchestration**: one component, the **orchestrator**, tells each participant what to do (**commands**) and decides the next step from their replies (**events**). Version 05 uses orchestration, with Ordering as the orchestrator (ADR 0003): the flow is short, it has one natural owner (the order), and its whole logic is then in one readable class, [`OrderSaga`](../05-microservices/src/Shop.Micro.Ordering.Application/Sagas/OrderSaga.cs).
+
+That choice shows in the messages ([`Contracts`](../05-microservices/src/Shop.Micro.Contracts/CatalogContracts.cs)). 04's events became commands with imperative names, owned by the service that **receives** them, because a command is part of the receiver's API:
+
+| 04 (choreography, in process) | 05 (orchestration, broker) | Kind | Owner |
+|---|---|---|---|
+| `OrderPlaced` | `ReserveStock(OrderId, Items)` | command | Catalog |
+| `OrderCancelled` | `ReleaseStock(OrderId, Items)` | command (the compensation) | Catalog |
+| `PaymentRequested` | `ProcessPayment(OrderId, Amount)` | command | Payments |
+| `StockReserved`, `StockReservationFailed` | same | reply event | Catalog |
+| `PaymentSucceeded`, `PaymentDeclined` | same | reply event | Payments |
+
+**The saga's state is the order's status.** No separate saga table is needed, because the order already says how far the process went:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: POST /orders (ReserveStock sent)
+    Pending --> AwaitingPayment: StockReserved
+    Pending --> Rejected: StockReservationFailed
+    AwaitingPayment --> PaymentPending: POST /pay (ProcessPayment sent)
+    AwaitingPayment --> Cancelled: POST /cancel (ReleaseStock sent)
+    PaymentPending --> Paid: PaymentSucceeded
+    PaymentPending --> Cancelled: PaymentDeclined (ReleaseStock sent = compensation)
+    Rejected --> [*]
+    Paid --> [*]
+    Cancelled --> [*]
+```
+
+Each reply is handled in one local transaction: the inbox row, the order's new status and, if any, the next command in the outbox. [`OrderSaga.StepAsync`](../05-microservices/src/Shop.Micro.Ordering.Application/Sagas/OrderSaga.cs) checks that the order is in the state the reply belongs to. If not (a late reply, or a repeat with a new id), it logs a warning and does nothing: in a distributed system that is normal, not an error. An order that does not exist is a real fault, so it throws, and the message ends in the dead-letter queue. `OrderSagaTests` covers every transition, the compensation and every ignored reply.
+
+**`PaymentPending` closes a race without a lock.** In 02/03 a cancel could slip in between the charge and the save (§5.5); 04 closed that with a row lock held for the whole request (§7.5). A lock cannot be held while a message travels to another service and back, so 05 closes it in the **model**: asking for the payment moves the order to `PaymentPending`, and from there neither pay nor cancel is allowed (`Order.Cancel` only works from `AwaitingPayment`). If a pay and a cancel read `AwaitingPayment` at the same instant, both try to save, and the `xmin` row version lets only the first succeed; the second becomes `409`.
+
+**What a saga does not give you: isolation.** Between `ReserveStock` and `ReleaseStock`, other customers see the stock as taken, even if the payment will be declined. That is the "I" of ACID missing (§3.10), and it is a business decision: acceptable here, not for every domain. Sagas are designed around such semantic locks (`Pending`, `PaymentPending` are exactly that: states that tell everyone "in progress").
+
+### 8.6 Journey of a request
+
+**Placing an order** (`POST /api/orders`): the request ends at step 7; the saga goes on without the client.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Client
+    participant G as Gateway (YARP)
+    box Ordering service
+        participant OE as OrderEndpoints
+        participant PO as PlaceOrder
+        participant ODB as orderingdb (+ outbox)
+        participant OD as Outbox dispatcher
+        participant OS as OrderSaga (via consumer + inbox)
+    end
+    box Catalog service
+        participant CE as /internal/product-snapshots
+        participant CR as ReserveStockConsumer (+ inbox)
+        participant CDB as catalogdb (+ outbox)
+        participant CD as Outbox dispatcher
+    end
+    participant MQ as RabbitMQ
+    C->>G: POST /api/orders
+    G->>OE: forward (service discovery)
+    OE->>PO: ExecuteAsync(PlaceOrderCommand)
+    PO->>CE: GET snapshots (HTTP, timeout, retries)
+    CE-->>PO: ProductSnapshot[]
+    PO->>ODB: INSERT order (Pending) + outbox ReserveStock, one COMMIT
+    OE-->>C: 202 Accepted, Location, status Pending
+    OD->>ODB: SELECT unsent … FOR UPDATE SKIP LOCKED
+    OD->>MQ: publish ReserveStock (confirmed), mark sent
+    MQ->>CR: deliver (catalog queue)
+    CR->>CDB: BEGIN, inbox row, SELECT … FOR UPDATE, UPDATE stock, outbox StockReserved, COMMIT
+    CR-->>MQ: ack
+    CD->>MQ: publish StockReserved
+    MQ->>OS: deliver (ordering queue)
+    OS->>ODB: BEGIN, inbox row, order → AwaitingPayment, COMMIT
+    OS-->>MQ: ack
+    C->>G: GET /api/orders/{id} (later)
+    G->>OE: forward
+    OE-->>C: 200, status AwaitingPayment
+```
+
+**Reception (gateway, then Ordering's HTTP adapter)**
+
+1. The [gateway](../05-microservices/src/Shop.Micro.Gateway/Program.cs) matches `/api/orders/{**rest}` and forwards the request to the `ordering` cluster, whose destination `http://ordering` service discovery resolves. It adds no logic. **YARP** (Yet Another Reverse Proxy) is Microsoft's **reverse proxy** library: a server that receives requests on behalf of others and forwards them (ADR 0005).
+   *Boundary client → gateway → service: an HTTP hop, no code dependency at all.*
+2. ASP.NET Core in the Ordering process (§4.4) calls [`OrderEndpoints`](../05-microservices/src/Shop.Micro.Ordering.Api/Http/OrderEndpoints.cs), which builds a `PlaceOrderCommand`, as in 02 and 04.
+
+**Processing (inside Ordering, one local transaction)**
+
+3. [`PlaceOrder`](../05-microservices/src/Shop.Micro.Ordering.Application/UseCases/PlaceOrder.cs) validates the input, then asks Catalog for names and prices through the `ICatalogClient` port. The adapter, [`CatalogHttpClient`](../05-microservices/src/Shop.Micro.Ordering.Infrastructure/Catalog/CatalogHttpClient.cs), calls `GET http://catalog/internal/product-snapshots?ids=…` with retries, a circuit breaker and a 5-second overall timeout. This is the one **synchronous** call between services (ADR 0006): the customer is waiting, and the order cannot be priced without it. Unknown ids → `400`, as before.
+   *Boundary Ordering → Catalog: the call crosses the network; the only shared type is `ProductSnapshot` in Contracts. Dependency: Application → port; Infrastructure → Application.*
+4. `Order.Place` creates the order in `Pending`. `orders.Add(order)` and `messages.Send(new ReserveStock(…))` only stage changes (the second through the [`OutboxOutgoingMessages`](../05-microservices/src/Shop.Micro.Ordering.Infrastructure/Persistence/Adapters.cs) adapter into Messaging's outbox). `unitOfWork.SaveChangesAsync` writes **the order, its lines and the outbox row in one transaction**. That transaction is the only one this request has.
+   *Boundary Application → Messaging: through Ordering's own port `IOutgoingMessages`; the Application does not know there is an outbox.*
+
+**Response**
+
+5. The adapter answers **`202 Accepted`** with `Location: /api/orders/{id}` and the order in `Pending`. `202` means "accepted for processing, not finished": the client polls the `Location` (the **asynchronous request-reply** pattern). This is the one intended difference in the public API (§2.8).
+
+**After the response (the saga, in the background)**
+
+6. Ordering's outbox dispatcher, woken by the commit, publishes `ReserveStock` to the `shop` exchange; RabbitMQ routes it to the `catalog` queue.
+7. Catalog's consumer host opens a transaction, records the message in the inbox and runs [`ReserveStockConsumer`](../05-microservices/src/Shop.Micro.Catalog.Api/Stock/StockConsumers.cs): lock the products in id order, check every line (all or none), decrement, stage `StockReserved` (or `StockReservationFailed`) in Catalog's outbox. One commit; then the delivery is acknowledged.
+8. Catalog's dispatcher publishes the reply to the `ordering` queue. Ordering's [consumer](../05-microservices/src/Shop.Micro.Ordering.Infrastructure/Messaging/SagaConsumers.cs) hands it to `OrderSaga`, which moves the order to `AwaitingPayment` (or `Rejected`) in one more local transaction.
+
+Three local transactions in two databases, four message hops counting the publishes, and no moment where both databases are locked together. In the test environment the whole sequence takes a few tens of milliseconds; a client that reads the order right after the `202` may still see `Pending`, which is why the contract suite polls (`WaitForSettled`).
+
+**Paying** (`POST /api/orders/{id}/pay`):
+
+1. [`PayOrder`](../05-microservices/src/Shop.Micro.Ordering.Application/UseCases/OrderUseCases.cs) loads the order and calls `RequestPayment()`: `AwaitingPayment → PaymentPending`, or `409`.
+2. It stages `ProcessPayment(OrderId, Total)` and saves both in one transaction (a concurrent change → `xmin` conflict → `409`). Answer: `202 Accepted`, status `PaymentPending`.
+3. Payments' [`ProcessPaymentConsumer`](../05-microservices/src/Shop.Micro.Payments.Api/Features/ProcessPayment.cs), inside its inbox transaction: if the order already has a payment, it re-sends that outcome and charges nothing. Otherwise it charges the gateway (order id as the **idempotency key**), inserts the payment and stages `PaymentSucceeded` or `PaymentDeclined`.
+4. `OrderSaga` marks the order `Paid`, or, on a decline, `Cancelled (PaymentDeclined)` and stages `ReleaseStock`: **the compensation**.
+5. Catalog's [`ReleaseStockConsumer`](../05-microservices/src/Shop.Micro.Catalog.Api/Stock/StockConsumers.cs) gives the units back. Nobody waits for an answer.
+
+**The external charge, again.** As in 04 (§7.5), the charge is a call to the outside world inside a local transaction that may still fail. Here the consequence is milder: a failed commit means the message was not acknowledged, so it is redelivered and the charge asked for again with the same idempotency key, which a real provider recognises. Without idempotency keys at the provider, this window would charge twice. Every external side effect in a message consumer must be idempotent.
+
+**Cancelling** stays synchronous for the order (`200`, `Cancelled`), and asynchronous for the stock: `ReleaseStock` is staged in the same transaction and the units come back a moment later. The contract test waits for them (`WaitForProduct`).
+
+**The error path**
+
+- **`400`, `404`, `409`.** Detected exactly where they were in 04, each service mapping its own exceptions to ProblemDetails with its own handler ([Ordering's](../05-microservices/src/Shop.Micro.Ordering.Api/Http/ErrorHandler.cs)). The gateway passes the response through untouched.
+- **A business failure after the `202`** is not an HTTP error any more: it is a **state**. A lack of stock arrives as `Rejected`, a declined payment as `Cancelled (PaymentDeclined)`. The client learns it by reading the order.
+- **A technical failure in a consumer** (a bug, a database outage) rolls back that service's transaction and returns the message to the queue; after 5 attempts it waits in the dead-letter queue for a person. The order stays in its transient state (`Pending`, `PaymentPending`) meanwhile. That is visible and recoverable, unlike a lost message. A real system adds an alert on dead letters and on orders stuck in a transient state for too long.
+- **Partial failure: Catalog is down while an order is placed.** The resilience handler retries until the client's 5-second timeout (`HttpClient.Timeout`) ends the wait, and `CatalogUnavailableException` becomes **`503 Service Unavailable`**: the request was valid, a dependency was not, try again later. Nothing was saved. Payments being down, on the other hand, delays payments without failing any request: messages wait in the queue. **Synchronous calls couple availability; messages do not.** That is the main reason to keep synchronous calls between services rare.
+- **A service is down behind the gateway.** YARP waits at most 10 seconds for a destination (`ActivityTimeout` in the [gateway](../05-microservices/src/Shop.Micro.Gateway/Program.cs)), then answers `504 Gateway Timeout`. Without that setting the client waited for YARP's default of 100 seconds, which the first manual run of this version showed.
+
+**Where would I change…**
+
+| Change | Files touched |
+|---|---|
+| Add a field to products (`Description`) | Catalog only (entity, DbContext + migration, endpoints, rules). If Ordering needs it: `ProductSnapshot` in Contracts, a contract change, deployed **Catalog first** so the new field exists before anyone reads it |
+| Change an order rule (max 500 units) | `Quantity.Max` in `Ordering.Domain`; deploy Ordering only |
+| Change how stock is reserved (allow backorders) | `ReserveStockConsumer` in Catalog; deploy Catalog only |
+| Add a step to the saga (reserve shipping) | A new service with its commands and replies in Contracts, new transitions in `Order` and `OrderSaga`, one more consumer in Ordering. The orchestrator is the one place to read the flow |
+| Add an endpoint | The owning service, plus a gateway route if it is a new path prefix |
+| Switch one service's database | That service only: its DbContext registration, migrations, raw SQL (`FOR UPDATE`, `SKIP LOCKED` in Messaging if it shares the library) |
+| Replace RabbitMQ (Azure Service Bus, Kafka) | Messaging's dispatcher, consumer host and topology; the AppHost; no business code |
+| Merge two services back | Possible because each kept clean insides: their messages become in-process calls again (04) |
+
+### 8.7 Rules
+
+[`ServiceRulesTests.cs`](../05-microservices/tests/Shop.Micro.ArchitectureTests/ServiceRulesTests.cs). Services are discovered from the folders in `src/`, like 04's modules, so a fourth service is checked from its first commit.
+
+| Test | Rule | Why |
+|---|---|---|
+| `Services_DoNotReferenceEachOther` | No project of one service references a project of another (project files and compiled references) | Independent build, version and release: the reason for services |
+| `Services_ShareOnlyContractsMessagingAndServiceDefaults` | Outside its own projects, a service references only those three | Shared code is coupling that must be upgraded in step |
+| `Gateway_ReferencesNoService` | The gateway references only ServiceDefaults | Routing must not depend on a service's code |
+| `Contracts_DependOnNothing` | Contracts reference only the base library | Every service inherits Contracts' dependencies |
+| `Messaging_KnowsNoService` | Messaging references only Contracts (its marker interface) | Plumbing that knew a service would become a shared kernel |
+| `ServiceDefaults_KnowsNoService` | ServiceDefaults references no Shop project | Same reason |
+| `OrderingDomain_DependsOnNothing` | 02's first rule, inside the Ordering service | The domain is the stable centre |
+| `OrderingApplication_DoesNotUseEfCoreAspNetCoreOrTheBroker` | No EF Core, ASP.NET Core, Npgsql, RabbitMQ or Messaging type in the Application's IL | The use cases and the saga stay testable with fakes; sending a message is a port |
+| `OrderingApplication_DoesNotReferenceInfrastructure` | No `*.Infrastructure` or `*.Api` assembly | The dependency rule |
+| `IntegrationMessages_LiveInContracts` | Every `IIntegrationMessage` is declared in Contracts | A message is a promise between services |
+| `OnlyOrderingInfrastructure_RehydratesValueObjects` | 02's rule | Skipping validation is safe only for stored data |
+
+Every rule was broken on purpose and seen to fail, except `OrderingApplication_DoesNotReferenceInfrastructure`: adding that reference creates a project cycle, and the build refuses it before any test runs (`MSB4006`). The rule stays, as documentation and for the day the reference arrives by another path. What the tests cannot see, review must: that no service connects to another service's **database** (the AppHost gives each service only its own connection string; that is a convention, not security, since the same server account could open the other databases: production would give each service its own database user), and that the messages keep their shape across deployments (contract tests per message, or a schema registry, are the usual answers; this playground relies on the end-to-end contract suite).
+
+Besides the shared contract suite (54 tests, through the gateway), 05 has tests of its own:
+
+- **Integration tests** of the messaging building block, against real PostgreSQL and RabbitMQ containers: `InboxTests.DuplicateMessage_IsHandledOnce`, `InboxTests.FailedMessage_IsRetriedThenDeadLettered`, `OutboxTests.MessageIsPublishedOnlyAfterCommit`, `OutboxTests.RolledBackMessage_IsNeverPublished`, `OutboxTests.UnroutableMessage_DoesNotBlockTheOthers`.
+- **Duplicate tests on the running system** ([`DuplicateMessageTests`](../05-microservices/tests/Shop.Micro.ContractTests/DuplicateMessageTests.cs)), which reach past the gateway to the broker and the databases. `RedeliveredReserveStock_ReservesOnce` sends Ordering's own `ReserveStock` again with the same id: the stock is taken once. `SecondProcessPaymentForAnOrder_ChargesOnce_AndAnswersWithTheSamePayment` sends a new `ProcessPayment` for a paid order: one payment row, the same outcome sent again. `InternalEndpoints_AreNotReachableThroughTheGateway` checks that `/internal/…` answers `404` through the gateway. Seen failing on purpose: without the inbox, the stock ended at 1 instead of 3; without Payments' "already has a payment" check, the second message was never handled (the unique index refused it on every attempt, and it went to the dead-letter queue). Switching off only the inbox's lookup changed nothing, because the inbox's primary key still stopped the second copy at commit: the lookup is an optimisation, the key is the guarantee.
+- **Saga unit tests** cover every transition with fakes. Removing the compensation from the saga makes `PaymentDeclined_CancelsTheOrder_AndCompensatesByReleasingTheStock` fail.
+
+### 8.8 What changed from version 04
+
+| | 04 Modular monolith | 05 Microservices |
+|---|---|---|
+| Deployables | 1 | 4 (3 services + gateway), plus PostgreSQL and RabbitMQ |
+| Databases | 1, a schema per module | **1 per service** |
+| Module/service communication | In-process bus, inside the request | **RabbitMQ**, after the request; one synchronous HTTP call (prices) |
+| Coordination | Choreography of events | **Orchestrated saga** with commands and replies |
+| Transaction | One across all modules | **One per service per step**; compensation instead of rollback |
+| `POST /orders`, `/pay` | `201` / `200`, final state | **`202`**, `Pending` / `PaymentPending`, final state later |
+| Order concurrency | `FOR UPDATE` on the order row | `xmin` row version + `PaymentPending` |
+| Stock concurrency | `FOR UPDATE` (the test fails without it) | `FOR UPDATE` too (one consumer per instance makes the test pass even without it, §8.3) |
+| Shared code | BuildingBlocks: events, bus, errors, transaction | Contracts, Messaging, ServiceDefaults; **errors duplicated per service** |
+| New infrastructure code | Bus (≈ 10 lines), shared transaction | Outbox, dispatcher, inbox, consumer host, topology, tracing (≈ 750 lines of Messaging) |
+| Tests | 81 unit, 12 architecture, 56 contract (54 shared + 2 of its own) | 99 unit, 11 architecture, 57 contract (54 shared + 3 of its own), **5 integration** |
+| C# lines in `src/` (no migrations) | about 1,890 | about 2,770 in 47 files (Ordering 1,040, Messaging 750, Catalog 440, Payments 270, ServiceDefaults 130, Contracts 50, Gateway 50, AppHost 40) |
+
+What moved where:
+
+- **Each module became a service almost unchanged inside.** Catalog's endpoints and rules, Ordering's domain and use cases, Payments' slices: the diff from 04 is small. That was 04's promise (§7.8), and it held.
+- **The bus became a broker plus a building block.** `IEventBus.PublishAsync` became `IMessageOutbox.Add`: publishing turned from "call the consumers now" into "write down that this must be sent". Consumers became `IMessageConsumer<T>` running under an inbox.
+- **`ICatalogQueries` became an HTTP endpoint and a typed client.** The interface moved to Ordering as a port (`ICatalogClient`), because Catalog no longer runs in Ordering's process to implement it.
+- **The shared transaction disappeared**, and with it the need for the pessimistic order lock. The model gained `PaymentPending` to do the lock's job across time.
+- **The events became commands and replies** owned by their receivers, because the coordination moved from choreography to an orchestrator.
+
+### 8.9 Trade-offs
+
+**Benefits**
+
+- **Independent deployment and scaling** per service, and **failure isolation** where communication is asynchronous (Payments down does not stop orders being placed).
+- **Hard boundaries.** A service cannot read another's tables even by accident: the database is not reachable.
+- **Team autonomy.** A team owns a service end to end, can pick its release rhythm, and in principle its technology.
+- **Observability forced from the start**: tracing, health and structured logs are not optional any more, and they also help in a monolith.
+
+**Costs**
+
+- **Much more machinery**: a broker, an outbox, an inbox, a dispatcher, dead letters, health checks, service discovery, a gateway, tracing. About 750 lines of messaging code here, and that is the minimal version (§8.4 lists what is missing).
+- **Eventual consistency.** Clients see `Pending`, must poll, and the UI must explain states that did not exist before. Stock looks taken during a payment that will fail.
+- **Harder to reason about and to test.** Messages arrive late, twice or out of order; every consumer must be idempotent; the contract suite needs Aspire, containers and polling, and is slower to start and to run.
+- **Operations**: four processes and two pieces of infrastructure to deploy, monitor, secure and upgrade; network calls that can time out; data spread over three databases (no join, no single backup, reports need their own read model).
+- **Synchronous calls bring back coupling.** The price lookup makes order placement depend on Catalog being up: every such call trades availability for simplicity.
+
+**The distributed monolith: warning signs.** The worst outcome is to pay all these costs and keep the coupling. Watch for:
+
+- services that must be **deployed together** for a change to work (a shared library with business code, a message changed in a breaking way);
+- **chains of synchronous calls** (A calls B, which calls C, to answer one request): the availability of the chain is the product of its links;
+- **shared databases** or one service reading another's tables "just for a report";
+- a "common" or "core" library every service depends on and that changes every sprint;
+- one change touching most services; teams that cannot release without coordinating;
+- services so small that every use case is a saga (**nano-services**).
+
+The architecture tests here guard the first and fourth signs; the others need reviews and metrics.
+
+**When to use it.** Several teams that must deliver independently; parts with very different scaling or availability needs; a modular monolith whose boundaries have proven stable and one of whose modules needs to break free. Extract **one** service at a time, starting where independence pays most.
+
+**When NOT to use it.** A new product whose boundaries are still moving (start with a modular monolith, chapter 7); one small team (the coordination cost has nobody to pay off); no experience with operations, tracing and messaging yet; data that needs strong consistency across what would be services. And for a playground-sized shop, honestly: never. That is why 04 exists.
+
+### 8.10 Interview questions
+
+1. **What is a microservice, and what problem does it solve?**
+   An independently deployable service that owns one business capability and its data, and talks to others over the network. It solves organisational and run-time problems: independent deployment, scaling and failure isolation for teams that need them. It does not solve code quality: a modular monolith gives the same boundaries far cheaper.
+2. **How do you update your database and publish a message reliably?**
+   With a transactional outbox: write the message to an outbox table in the same local transaction as the business change, and let a background dispatcher publish committed rows and mark them sent. Delivery becomes at least once, so consumers must be idempotent.
+3. **How do you make a consumer idempotent?**
+   Record each handled message id in an inbox table in the same transaction as the consumer's work, and skip ids already recorded. Add business-level checks for repeats that arrive as new messages (one payment per order, a saga that ignores replies that do not fit the state).
+4. **What is a saga? Orchestration or choreography?**
+   A sequence of local transactions across services, with compensating actions instead of a rollback. Choreography: services react to each other's events; good for short, loosely related flows, hard to follow as they grow. Orchestration: one orchestrator sends commands and reacts to replies; the flow is in one place, at the cost of a central component. Here Ordering orchestrates, and the order's status is the saga's state.
+5. **Why answer `202 Accepted`?**
+   Because the work is not finished when the request ends: it continues through messages. `202` with a `Location` tells the client where to check the outcome (asynchronous request-reply). Returning `201` with a final state would mean waiting for every service, coupling the request to all of them.
+6. **What is a distributed monolith and how do you avoid it?**
+   Services that cannot change or deploy independently: shared databases, shared business libraries, chains of synchronous calls, breaking message changes. Avoid it by drawing services around bounded contexts, sharing only contracts, preferring asynchronous messages, versioning contracts, enforcing references with tests, and starting from a modular monolith.
+
+---
+
 ## Glossary
 
 Terms are added as each chapter introduces them. The section where a term is explained is in brackets.
 
 - **ACID**: Atomicity, Consistency, Isolation, Durability, the guarantees of a database transaction. [§3.10]
+- **Acknowledgement (ack / nack)**: the consumer telling the broker a message was handled (ack: forget it) or failed (nack or reject: return it, or drop it to the dead-letter queue). Messaging acks only after the commit. [§8.4]
 - **Adapter**: in Hexagonal Architecture, code that connects a port to a concrete technology (an HTTP endpoint, an EF Core repository). *Driving* adapters call the application; *driven* adapters are called by it. [§3.4]
 - **ADR**: Architecture Decision Record, a short numbered document with the context, the decision and the consequences of one architectural choice. [§2.10]
 - **Aggregate / aggregate root**: a cluster of domain objects changed as one unit through a single entry point (the root), which enforces the rules. [§3.7]
 - **Analyzer**: a compiler plug-in that reports code problems as warnings with an ID (`CA…`, `IDE…`). [§2.6]
 - **Anemic domain model**: domain classes with data but no behaviour; the rules live in service classes. [§3.7]
-- **API gateway**: the single entry point of a distributed system; it forwards each request to the right service (YARP in 05). [§1.4]
+- **API gateway**: the single entry point of a distributed system; it forwards each request to the service that owns it and adds cross-cutting concerns such as timeouts (YARP in 05). [§1.4, §8.6]
+- **AppHost**: the Aspire project that describes a distributed application in C# (containers, databases, services, references, start order) and runs it for development. Not deployed. [§8.3]
 - **Architecture test**: an automated test that checks the dependency rules of an architecture (ArchUnitNET here). [§2.7]
 - **ArchUnitNET**: a .NET library to write architecture rules as tests. [§2.7]
-- **Aspire**: Microsoft's toolkit (formerly ".NET Aspire") to run, wire and observe a distributed application locally. The AppHost describes the system; the dashboard shows logs and traces. [§1.4]
+- **Aspire**: Microsoft's toolkit (formerly ".NET Aspire") to run, wire and observe a distributed application locally. The AppHost describes the system; the dashboard shows logs, traces and metrics of every process. [§1.4, §8.3]
 - **Assembly**: the compiled output of a project (`.dll` / `.exe`). [§2.2]
 - **Assembly fixture**: an xUnit v3 object created once for all the tests in an assembly. [§2.8]
+- **Asynchronous request-reply**: answering `202 Accepted` with a `Location` the client polls, because the work continues after the response. [§8.6]
 - **At-least-once delivery**: what message brokers guarantee: a message is never lost, but may arrive more than once, so consumers must be idempotent. [§7.3]
 - **Big ball of mud**: a system with no visible structure, where everything depends on everything. [§4.8]
+- **Binding (RabbitMQ)**: the rule connecting a queue to an exchange for a routing key ("deliver `ReserveStock` to the `catalog` queue"). [§8.4]
 - **Bounded context**: a boundary inside which one domain model and one language apply. [§3.7]
 - **Building blocks**: the small shared projects every module of a modular monolith uses (event interfaces, the bus, shared errors). Kept free of business logic, or they become a shared kernel. [§7.2]
 - **Business layer**: in a layered architecture, the layer with the rules and the transactions, between presentation and data access. [§4.1]
 - **Call direction / dependency direction**: who calls whom at runtime, versus whose code references whose at compile time. [§3.6]
 - **Central package management**: all NuGet versions in one `Directory.Packages.props`. [§2.5]
 - **Change tracker (EF Core)**: EF Core's record of every entity it loaded or was given, used to work out what to write on `SaveChanges`. Projections that return no entities are not tracked. [§6.4]
+- **Choreography / orchestration**: the two ways to coordinate a saga. In choreography each service reacts to the others' events; in orchestration one **orchestrator** sends commands and decides the next step from the replies (Ordering in 05). [§8.5]
+- **Circuit breaker**: after repeated failures calling a dependency, stop calling it for a while and fail at once, so a sick service is not flooded and callers do not wait. [§8.3]
 - **Clean Architecture**: Robert C. Martin's version of "business rules in the centre, dependencies point inwards" (2012/2017). [§3.4]
 - **Clean Code**: Robert C. Martin's book (2008) about writing readable code in the small. Not an architecture. [§3.3]
 - **CLI**: Command-Line Interface; here, the `dotnet` command. [§1.1]
 - **Cohesion**: how much the things inside one part belong together. High is good. [§3.5]
-- **Command**: a request to change state (`PlaceOrder`). [§3.8]
+- **Command**: a request to change state (`PlaceOrder`). As a message between services, it has an imperative name and exactly one receiver, which owns its type (`ReserveStock` in 05). [§3.8, §8.5]
 - **Compensating action**: a step that undoes the effect of an earlier step when a later one fails (release stock after a declined payment). [§3.10]
+- **Competing consumers**: several instances of one service reading the same queue, each message going to one of them. [§8.4]
 - **Composition root**: the one place, at startup, where the application wires its classes together (`Program.cs` here; in version 04 also each module's `IModule`). [§4.2, §7.2]
 - **Concurrency**: several requests working on the same data at the same time. [§3.10]
 - **Conditional update**: an `UPDATE` that only applies if a condition still holds (`WHERE stock >= 1`), so a race cannot oversell. [§3.10]
-- **Consumer (of an event)**: the class that reacts to one kind of event or message (`OrderPlacedConsumer`). [§7.3]
+- **Consumer (of an event or message)**: the class that reacts to one kind of event or message (`OrderPlacedConsumer` in 04, `ReserveStockConsumer` in 05). [§7.3, §8.4]
 - **Container / image**: an isolated running process (Docker) / the package it starts from. [§1.3]
 - **Context map**: how bounded contexts relate and communicate. [§3.7]
 - **Contract test**: a test of the public API over HTTP only; here, shared by all versions. [§2.8]
@@ -2019,14 +2583,17 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **CQRS**: Command Query Responsibility Segregation, handling changes and reads separately. [§3.8]
 - **CRUD**: Create, Read, Update, Delete; an application that mostly stores and shows data. [§3.7]
 - **Data access layer**: the bottom layer of a layered architecture; it reads and writes storage. [§4.1]
+- **Database per service**: each service owns a database no other service reads or writes; the only way to its data is the service's API or messages. [§8.2]
 - **DbContext**: EF Core's main class. It tracks the entities you loaded or added and writes all their changes in one `SaveChanges` call. [§4.2]
 - **DDD**: Domain-Driven Design, shaping code, boundaries and language after the business domain. Strategic (boundaries) and tactical (building blocks). [§3.7]
+- **Dead-letter queue**: where a message goes after failing too many times, for a person to inspect, instead of being retried forever. [§8.4]
 - **Deadlock**: two transactions each waiting for a lock the other holds; the database kills one of them. Avoided by always locking rows in the same order. [§4.5]
 - **Dependency injection (DI)**: supplying a class's dependencies from outside (constructor parameters), wired at startup. [§3.6]
 - **Dependency inversion**: high-level code owns the interface it needs; low-level code implements it, so the dependency points to the high-level code. [§3.6]
 - **Dependency rule**: source code dependencies point inwards, towards the business rules. [§3.4]
 - **Deployable**: something you can start and ship on its own. [§3.2]
 - **Design-time factory**: a class (`IDesignTimeDbContextFactory`) that tells the `dotnet ef` tool how to create a `DbContext` without starting the application. [§1.5]
+- **Distributed monolith**: services that cannot change or deploy independently (shared databases, shared business code, chains of synchronous calls): the costs of microservices without the benefits. [§8.9]
 - **Docker Compose**: a tool that starts the containers described in a `compose.yaml` file. [§1.3]
 - **Domain**: the area of business the software serves. [§3.7]
 - **Domain event**: something meaningful that happened inside a bounded context, named in the past tense. [§3.9]
@@ -2035,6 +2602,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **DTO**: Data Transfer Object, a plain type that only carries data across a boundary (a request or response record). [§4.2]
 - **Dual write**: writing to two systems (a database and a message broker) with no transaction covering both, so a crash in between leaves them disagreeing. Solved with an outbox. [§7.3]
 - **EF Core / EF Core entity**: Entity Framework Core, the .NET object-relational mapper that maps classes to tables. An EF Core entity is a class mapped to a table; it is not the same idea as a DDD entity. [§4.2]
+- **Effectively once**: what an outbox plus an idempotent consumer achieve on top of at-least-once delivery: each message's effect happens once, though it may be delivered more often. [§8.4]
 - **Endpoint**: in ASP.NET Core, the code that handles one method and path (`POST /api/orders`). [§4.4]
 - **Endpoint discovery**: finding every endpoint class at startup by reflection and mapping it, so no central list of routes exists (`IEndpoint` in version 03). [§6.2]
 - **Endpoint filter**: ASP.NET Core code that runs before and after one endpoint or a group of endpoints; the place for cross-cutting behaviour without a mediator. [§6.2]
@@ -2044,15 +2612,18 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Event sourcing**: storing every event instead of the current state, and computing the state by replaying them. [§3.2]
 - **Eventual consistency**: parts of the system may disagree for a short time but converge. [§3.10]
 - **Exception handler (ASP.NET Core)**: middleware that catches exceptions thrown further down the pipeline and writes an error response; ours turns them into ProblemDetails. [§4.4]
+- **Exchange (RabbitMQ)**: the entry point messages are published to; it routes each one to the bound queues. A **topic** exchange routes by routing key (05 has one, `shop`). [§8.4]
 - **Feature band**: a group of SDK releases (10.0.4xx) that adds tooling features without changing the runtime. [§1.1]
 - **Foreign key (FK)**: a column whose value must exist as the primary key of another table; the database refuses rows that break it. [§4.2]
 - **`global.json`**: the file that pins the .NET SDK, the test runner and project SDK versions for a folder. [§1.1]
+- **Head-of-line blocking**: one stuck item at the front of a queue holding back everything behind it; the outbox dispatcher avoids it by skipping a refused row. [§8.4]
+- **Health check**: an endpoint that reports whether a process is alive (`/alive`) or ready for traffic (`/health`: its database and queue work). Aspire waits on it before starting dependants. [§8.3]
 - **Hexagonal Architecture / Ports and Adapters**: Alistair Cockburn's style (2005): the application defines ports, and adapters connect them to technologies. [§3.4]
 - **Idempotency key**: a unique value sent with a request (such as the order id with a charge) so the receiver can recognise a repeat and do the work only once. [§4.5]
 - **Idempotent**: doing it twice has the same effect as doing it once. [§3.9]
 - **IL (Intermediate Language)**: what C# compiles to; the code inside a `.dll`. Architecture tests can read it to see what code really calls. [§6.6]
 - **In-process event bus**: an event bus that calls the consumers directly, in the same process, request and transaction as the publisher. Decouples code, not time or failure. [§7.3]
-- **Inbox**: a table of already-handled message ids, used to ignore duplicate deliveries. [§3.9]
+- **Inbox**: a table of already-handled message ids, written in the same transaction as the consumer's work, used to ignore duplicate deliveries. [§3.9, §8.4]
 - **Input port**: an interface through which a driving adapter calls a use case (`IPlaceOrder`). Here the use-case class itself plays that role. [§5.2]
 - **Input validation**: checking that a request is well formed and reporting which field is wrong; done at the application boundary. Compare invariant. [§5.5]
 - **Integration event**: an event published to other bounded contexts, part of a context's public contract; carries ids and plain values only. [§3.9, §7.3]
@@ -2067,7 +2638,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Mermaid**: a text format for diagrams, rendered by GitHub and by VS Code with an extension. [§1.2]
 - **Message**: a piece of data sent from one part of a system to another, often through a broker. [§3.9]
 - **Message broker**: a server that receives messages and delivers them to consumers through queues (RabbitMQ). [§3.9]
-- **Microservices**: independently deployable services, each owning one business capability and its data. [§3.2]
+- **Microservices**: independently deployable services, each owning one business capability and its data, talking over the network. [§3.2, §8.1]
 - **Microsoft.Testing.Platform**: the .NET 10 test runner used by `dotnet test` here (the older one is VSTest). [§1.1]
 - **Middleware**: a component of the ASP.NET Core request pipeline; each one can act before and after the next. [§4.4]
 - **Migration (EF Core)**: a versioned, generated description of a database schema change. Applied migrations are recorded in the table `__EFMigrationsHistory`. [§1.5, §1.6]
@@ -2078,15 +2649,20 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Monolith**: an application deployed as a single unit. [§3.2]
 - **MSBuild**: the .NET build engine that reads `.csproj` and `.props` files. [§1.1]
 - **N-tier (layered) architecture**: horizontal layers (presentation → business → data), each calling the one below. [§3.2]
+- **Nano-services**: services so small that most use cases span several of them; a sign of boundaries drawn too fine. [§8.9]
 - **Navigation property**: a property of an EF Core entity that points to related entities (`Order.Lines`). [§4.2]
 - **NuGet**: .NET's package manager and the nuget.org package registry. [§2.2]
 - **Onion Architecture**: Jeffrey Palermo's style (2008): the domain model in the centre, with concentric rings around it. [§3.4]
+- **OpenTelemetry**: the vendor-neutral standard and libraries for logs, metrics and traces; 05 exports them to the Aspire dashboard. [§8.3]
 - **Optimistic concurrency**: detecting, at save time, that someone else changed the row since you read it, and retrying. [§3.10]
-- **Outbox (transactional)**: saving outgoing messages in the same transaction as the data and publishing them afterwards, so none is lost. [§3.9]
+- **Outbox (transactional)**: saving outgoing messages in the same transaction as the data and publishing them afterwards (through the outbox dispatcher), so a message goes out if and only if the change was committed. [§3.9, §8.4]
+- **Outbox dispatcher (relay)**: the background process that publishes committed outbox rows to the broker and marks them sent. [§8.4]
 - **Owned entity (EF Core)**: an entity stored and loaded only together with its owner, like order lines with their order. [§5.2]
 - **Package-by-feature**: the Java name for organising packages by feature instead of by layer; the idea behind vertical slices. [§6.1]
+- **Partial failure**: one part of a distributed system failing while the others run; every network call must expect it (timeouts, retries, a clear error such as `503`). [§8.6]
 - **Persistence ignorance**: domain classes that know nothing about how they are stored (no ORM attributes, no database types). [§5.8]
 - **Pessimistic locking**: locking the rows first (`SELECT … FOR UPDATE`) so concurrent requests wait their turn, instead of detecting conflicts afterwards (optimistic). [§7.5]
+- **Poison message**: a message that fails every time it is handled; without a delivery limit it would be retried forever. [§8.4]
 - **Port**: in Hexagonal Architecture, an interface defined by the application for something it needs or offers. [§3.4]
 - **PostgreSQL**: the open-source relational database used by every version. [§1.3]
 - **Presentation layer**: the top layer of a layered architecture; it talks to the outside world (HTTP, UI). [§4.1]
@@ -2094,28 +2670,40 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **ProblemDetails**: the standard JSON format for HTTP API errors (RFC 9457). [§3.11]
 - **Project (SDK-style)**: a `.csproj` that compiles to one assembly, with defaults supplied by the SDK. [§2.2]
 - **Projection**: a query that selects exactly the data a response needs, instead of loading whole entities. [§3.8]
+- **Publisher confirms**: the broker acknowledging to the publisher that it has stored a message; the outbox row is marked sent only after it. [§8.4]
 - **Query**: a request that reads state and changes nothing (`GetOrder`). [§3.8]
+- **Queue**: where a broker keeps messages until a consumer takes them; in 05, one durable queue per service. [§8.4]
+- **Quorum queue**: RabbitMQ's replicated, durable queue type, the recommended choice for durable queues. [§8.4]
 - **RabbitMQ**: the open-source message broker used by version 05. [§3.9]
 - **Read replica**: a read-only copy of a database that serves queries, so reads do not load the main database. [§6.4]
 - **Rehydration**: turning stored data back into domain objects, without re-running today's validation rules on it. [§5.2]
 - **Relaxed / strict layering**: strict means a layer may use only the layer directly below it; relaxed means any layer below. [§4.6]
 - **Repository**: a collection-like interface to load and save aggregates. [§3.7]
+- **Resilience (HTTP)**: retries with back-off, timeouts and a circuit breaker around calls to other services (`Microsoft.Extensions.Http.Resilience`). [§8.3]
+- **Reverse proxy**: a server that receives requests on behalf of other servers and forwards them; an API gateway is one. [§8.6]
 - **RFC**: Request for Comments, a numbered internet standard. [§3.11]
 - **Rich domain model**: entities and value objects with behaviour that protects their own rules; the opposite of an anemic model. [§5.1]
 - **Roslyn**: the C# compiler. [§1.1]
+- **Routing key**: the label a message is published with, which the exchange uses to pick queues (the message type name in 05). [§8.4]
 - **Routing**: the framework step that picks the endpoint matching a request method and path. [§4.4]
 - **Row lock**: a lock the database takes on a row while a transaction updates it (or reads it with `SELECT … FOR UPDATE`); other writers of that row wait until it commits. [§4.5, §7.5]
 - **Row version**: a value that changes on every update of a row; comparing it at save time detects that someone else changed the row (`xmin` here). [§4.5]
 - **Runtime**: the part of .NET that runs compiled programs. [§1.1]
-- **Saga**: a multi-step process across services, made of local transactions, with compensating actions on failure. [§3.10]
+- **Saga**: a multi-step process across services, made of local transactions linked by messages, with compensating actions instead of a rollback on failure. Coordinated by choreography or orchestration. [§3.10, §8.5]
+- **Sampler (tracing)**: decides which spans are recorded; 05's drops background polling so the dashboard shows only real work. [§8.3]
 - **Schema (database)**: a named namespace for tables inside one database (`catalog.products`). Version 04 gives each module its own. [§7.2]
 - **Scope (dependency injection)**: a lifetime for services; ASP.NET Core creates one per request, so scoped services are shared inside that request only. [§4.4]
 - **SDK**: Software Development Kit; for .NET, the runtime + C# compiler + `dotnet` CLI + MSBuild. [§1.1]
 - **`SELECT … FOR UPDATE`**: a SQL read that also locks the rows it returns until the transaction ends. [§7.5]
+- **Semantic lock**: a state that tells everyone "in progress" (`Pending`, `PaymentPending`) and makes other operations wait or be refused, instead of a database lock across services. [§8.5]
 - **Serverless**: deploying individual functions that the cloud runs on demand. [§3.2]
 - **Service (layered architecture)**: a class in the business layer that groups the operations of one area (`OrderService`). [§4.2]
+- **Service (microservices)**: one independently deployable process that owns one business capability and its data. [§8.1]
+- **Service discovery**: finding another service's address by name (`http://catalog`) instead of configuring ports. [§8.3]
+- **ServiceDefaults**: the Aspire convention of one shared project with hosting defaults every service applies (telemetry, health checks, discovery, resilience). [§8.3]
 - **Shadow property**: a property EF Core maps to a column although the class has no such property (the row version here). [§5.2]
 - **Shared kernel**: a part of the model that several bounded contexts share and must change together. Sometimes deliberate, often an accident of a "common" project that grew. [§7.8]
+- **`SKIP LOCKED`**: a PostgreSQL option of `SELECT … FOR UPDATE` that skips rows another transaction has locked, so several workers take different rows instead of waiting. [§8.4]
 - **SKU**: Stock Keeping Unit, the shop's own unique product code. [§3.11]
 - **Snapshot (order line)**: a copy of a value taken at a moment in time, such as the product name and price when an order is placed. [§4.5]
 - **SOA**: Service-Oriented Architecture, large shared services often joined by an enterprise service bus; the ancestor of microservices. [§3.2]
@@ -2126,6 +2714,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Strong consistency**: every reader sees the latest committed data at once, as with one database transaction. [§3.10]
 - **Test double / fake**: an object that stands in for a real dependency in a test; a fake is a small working implementation (the in-memory repositories). [§5.5]
 - **Testcontainers**: a library that starts throwaway Docker containers for tests. [§1.3]
+- **Trace / span**: a trace is everything that happened because of one request, across processes; it is a tree of spans, each one timed operation (an HTTP call, a query, a publish). [§8.3]
 - **Transaction**: a group of database changes that succeed or fail together. [§3.10]
 - **Transaction Script**: each operation is one procedure that reads, decides and writes, with no domain model. [§3.2]
 - **Transitive package**: a package your project gets because another package depends on it. [§2.5]
@@ -2138,7 +2727,9 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Value object**: an immutable domain object defined only by its values (`Money`). [§3.7]
 - **Vertical Slice architecture**: code organised by use case, one slice (here one file) per use case, instead of by technical layer. [§3.2, §6.1]
 - **Volume (Docker)**: storage that outlives a container, used here to keep the database data. [§1.3]
+- **W3C Trace Context (`traceparent`)**: the standard header that carries the trace id from process to process; 05 also carries it through the outbox row and an AMQP header. [§8.3]
 - **WebApplicationFactory**: starts an ASP.NET Core app in memory for tests. [§2.7]
 - **xmin**: a PostgreSQL system column that changes on every update of a row; used as a row version for optimistic concurrency. [§4.5]
 - **xUnit**: the test framework used here (version 3). [§2.7]
 - **YAGNI**: "You Aren't Gonna Need It", do not build something until it is needed. [§5.2]
+- **YARP (Yet Another Reverse Proxy)**: Microsoft's reverse proxy library, used for 05's gateway. [§8.6]

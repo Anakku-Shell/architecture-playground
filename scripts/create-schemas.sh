@@ -13,6 +13,7 @@
 # Output: artifacts/sql/<version>.sql (git-ignored). Apply one with, for example:
 #   docker compose exec -T postgres psql -U shop -d shop_clean < artifacts/sql/02-clean-hexagonal.sql
 # 04 writes one file per module schema (04-modular-monolith-catalog.sql, …); apply all three to shop_modular.
+# 05 writes one file per service database (05-microservices-catalog.sql, …): catalogdb, orderingdb, paymentsdb.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -26,6 +27,9 @@ targets=(
   "04-modular-monolith-catalog|04-modular-monolith/src/Shop.Modular.Catalog|"
   "04-modular-monolith-ordering|04-modular-monolith/src/Shop.Modular.Ordering.Infrastructure|"
   "04-modular-monolith-payments|04-modular-monolith/src/Shop.Modular.Payments|"
+  "05-microservices-catalog|05-microservices/src/Shop.Micro.Catalog.Api|"
+  "05-microservices-ordering|05-microservices/src/Shop.Micro.Ordering.Infrastructure|"
+  "05-microservices-payments|05-microservices/src/Shop.Micro.Payments.Api|"
 )
 
 only="${1:-}"

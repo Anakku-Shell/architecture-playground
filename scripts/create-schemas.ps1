@@ -12,6 +12,7 @@
 # Output: artifacts/sql/<version>.sql (git-ignored). Apply one with, for example:
 #   Get-Content artifacts/sql/02-clean-hexagonal.sql | docker compose exec -T postgres psql -U shop -d shop_clean
 # 04 writes one file per module schema (04-modular-monolith-catalog.sql, …); apply all three to shop_modular.
+# 05 writes one file per service database (05-microservices-catalog.sql, …): catalogdb, orderingdb, paymentsdb.
 param([string]$Only = "")
 
 $ErrorActionPreference = "Stop"
@@ -25,7 +26,10 @@ $targets = @(
     @{ Name = "03-vertical-slice"; Project = "03-vertical-slice/src/Shop.Slice.Api"; Context = "" },
     @{ Name = "04-modular-monolith-catalog"; Project = "04-modular-monolith/src/Shop.Modular.Catalog"; Context = "" },
     @{ Name = "04-modular-monolith-ordering"; Project = "04-modular-monolith/src/Shop.Modular.Ordering.Infrastructure"; Context = "" },
-    @{ Name = "04-modular-monolith-payments"; Project = "04-modular-monolith/src/Shop.Modular.Payments"; Context = "" }
+    @{ Name = "04-modular-monolith-payments"; Project = "04-modular-monolith/src/Shop.Modular.Payments"; Context = "" },
+    @{ Name = "05-microservices-catalog"; Project = "05-microservices/src/Shop.Micro.Catalog.Api"; Context = "" },
+    @{ Name = "05-microservices-ordering"; Project = "05-microservices/src/Shop.Micro.Ordering.Infrastructure"; Context = "" },
+    @{ Name = "05-microservices-payments"; Project = "05-microservices/src/Shop.Micro.Payments.Api"; Context = "" }
 )
 
 $out = "artifacts/sql"

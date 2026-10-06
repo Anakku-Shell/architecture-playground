@@ -1,0 +1,22 @@
+<!--
+  Integration tests of the messaging building block against a real PostgreSQL and a real RabbitMQ
+  (Testcontainers). The outbox and the inbox are about what happens between a database and a broker,
+  so fakes would test nothing. Guide: §8.4.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers.RabbitMq" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Shop.Micro.Messaging\Shop.Micro.Messaging.csproj" />
+  </ItemGroup>
+
+</Project>

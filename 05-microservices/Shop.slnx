@@ -1,0 +1,32 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Shop.Micro.AppHost/Shop.Micro.AppHost.csproj" />
+    <Project Path="src/Shop.Micro.Gateway/Shop.Micro.Gateway.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/">
+    <Project Path="src/Shop.Micro.Contracts/Shop.Micro.Contracts.csproj" />
+    <Project Path="src/Shop.Micro.Messaging/Shop.Micro.Messaging.csproj" />
+    <Project Path="src/Shop.Micro.ServiceDefaults/Shop.Micro.ServiceDefaults.csproj" />
+  </Folder>
+  <Folder Name="/src/Catalog/">
+    <Project Path="src/Shop.Micro.Catalog.Api/Shop.Micro.Catalog.Api.csproj" />
+  </Folder>
+  <Folder Name="/src/Ordering/">
+    <Project Path="src/Shop.Micro.Ordering.Api/Shop.Micro.Ordering.Api.csproj" />
+    <Project Path="src/Shop.Micro.Ordering.Application/Shop.Micro.Ordering.Application.csproj" />
+    <Project Path="src/Shop.Micro.Ordering.Domain/Shop.Micro.Ordering.Domain.csproj" />
+    <Project Path="src/Shop.Micro.Ordering.Infrastructure/Shop.Micro.Ordering.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Payments/">
+    <Project Path="src/Shop.Micro.Payments.Api/Shop.Micro.Payments.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Shop.Micro.ArchitectureTests/Shop.Micro.ArchitectureTests.csproj" />
+    <Project Path="tests/Shop.Micro.ContractTests/Shop.Micro.ContractTests.csproj" />
+    <Project Path="tests/Shop.Micro.IntegrationTests/Shop.Micro.IntegrationTests.csproj" />
+    <Project Path="tests/Shop.Micro.UnitTests/Shop.Micro.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/contract-tests/">
+    <Project Path="../contract-tests/Shop.ContractTests/Shop.ContractTests.csproj" />
+  </Folder>
+</Solution>

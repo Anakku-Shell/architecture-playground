@@ -1,0 +1,17 @@
+<!--
+  Ordering.Application: use cases, the saga and the ports. Besides its Domain it knows only Contracts (the
+  messages of the services it talks to), never Messaging, EF Core or ASP.NET Core: sending a message is a
+  port like saving an order. Guide: §8.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Micro.Ordering.Domain\Shop.Micro.Ordering.Domain.csproj" />
+    <ProjectReference Include="..\Shop.Micro.Contracts\Shop.Micro.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

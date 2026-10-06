@@ -1,0 +1,16 @@
+<!--
+  Gateway: the single entry point of version 05 (port 5105). It forwards each request to the service that
+  owns the path and knows nothing else about them: no project reference to any service. Guide: §8.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <PackageReference Include="Yarp.ReverseProxy" />
+    <PackageReference Include="Microsoft.Extensions.ServiceDiscovery.Yarp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Micro.ServiceDefaults\Shop.Micro.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+</Project>

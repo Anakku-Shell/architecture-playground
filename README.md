@@ -8,7 +8,7 @@ One small shop implemented **five times** in .NET, each time with a different ar
 | 02 | [`02-clean-hexagonal`](02-clean-hexagonal/README.md) | Clean / Hexagonal (ports and adapters) with a rich domain model | ready |
 | 03 | [`03-vertical-slice`](03-vertical-slice/README.md) | Vertical slices (one file per use case) with light CQRS | ready |
 | 04 | [`04-modular-monolith`](04-modular-monolith/README.md) | Modular monolith: one process, three modules, a different style per module | ready |
-| 05 | `05-microservices` | Microservices: one service per module, RabbitMQ messaging, a saga, an API gateway | coming |
+| 05 | [`05-microservices`](05-microservices/README.md) | Microservices: one service per module, RabbitMQ messaging with outbox and inbox, an orchestrated saga, an API gateway | ready |
 
 The shop has three parts: **Catalog** (products and stock), **Ordering** (orders and their life cycle) and **Payments** (a fake payment gateway). The public API is identical in every version, and every version passes the same **contract tests** (`contract-tests/`). Only the inside changes.
 

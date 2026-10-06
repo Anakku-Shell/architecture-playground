@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Aspire.Hosting.Testing" />
+    <!-- Only for the 05-only tests that send a message straight to the broker and read a service's tables. -->
+    <PackageReference Include="RabbitMQ.Client" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+
+  <!-- The AppHost, not a service: the tests start the whole system the way a developer does. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\contract-tests\Shop.ContractTests\Shop.ContractTests.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Micro.AppHost\Shop.Micro.AppHost.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Micro.Contracts\Shop.Micro.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

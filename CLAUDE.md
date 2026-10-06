@@ -8,7 +8,7 @@ The explanations live in `docs/ARCHITECTURE_GUIDE.md`. **Keep it in sync with th
 
 - `01-layered/`, `02-clean-hexagonal/`, `03-vertical-slice/`, `04-modular-monolith/`, `05-microservices/`: one **standalone** solution each (`Shop.slnx`, `src/`, `tests/`, `README.md`, `docs/adr/`).
   - **Never reference code across version folders.** The only shared code is `contract-tests/`. Duplication between versions is intentional: each version must be readable on its own.
-  - Built so far: **01** (layered: `Shop.Layered.Api → .Business → .Data`; conditional `UPDATE` for stock, `xmin` row version on orders), **02** (clean/hexagonal: `Shop.Clean.Domain`, `.Application` with ports, `.Infrastructure` adapters, `.Api`; rich domain, optimistic `xmin` + retry) **03** (vertical slice: one project `Shop.Slice.Api`, one file per use case under `Features/`, `IEndpoint` discovery, Domain copied from 02, queries as projections) and **04** (modular monolith: `Shop.Modular.Host` + modules Catalog (CRUD), Ordering (`.Domain`/`.Application`/`.Infrastructure`, clean) and Payments (slices), each with `*.Contracts`; `BuildingBlocks` (no dependencies) and `BuildingBlocks.Infrastructure` (`IModule`, in-process bus, `SharedTransaction`); one schema per module; integration events in one shared transaction; `SELECT … FOR UPDATE` locks). 05 is next.
+  - Built so far: **01** (layered: `Shop.Layered.Api → .Business → .Data`; conditional `UPDATE` for stock, `xmin` row version on orders), **02** (clean/hexagonal: `Shop.Clean.Domain`, `.Application` with ports, `.Infrastructure` adapters, `.Api`; rich domain, optimistic `xmin` + retry) **03** (vertical slice: one project `Shop.Slice.Api`, one file per use case under `Features/`, `IEndpoint` discovery, Domain copied from 02, queries as projections) and **04** (modular monolith: `Shop.Modular.Host` + modules Catalog (CRUD), Ordering (`.Domain`/`.Application`/`.Infrastructure`, clean) and Payments (slices), each with `*.Contracts`; `BuildingBlocks` (no dependencies) and `BuildingBlocks.Infrastructure` (`IModule`, in-process bus, `SharedTransaction`); one schema per module; integration events in one shared transaction; `SELECT … FOR UPDATE` locks) and **05** (microservices: `Shop.Micro.AppHost` (Aspire), `.Gateway` (YARP), `.ServiceDefaults`, `.Contracts` (messages, no dependencies), `.Messaging` (hand-written outbox/inbox on RabbitMQ), services `Catalog.Api` (CRUD), `Ordering.Domain`/`.Application`/`.Infrastructure`/`.Api` (clean, `OrderSaga` orchestrator) and `Payments.Api` (slices); one database per service; commands + reply events; `202 Accepted`; `xmin` on orders). Next: phase 06 (guide chapters 9–13).
 - `contract-tests/Shop.ContractTests/`: the shared API contract suite (abstract xUnit classes). Each version's `Shop.<V>.ContractTests` project inherits it. See its README.
 - Root build files apply to every version: `global.json` (SDK), `Directory.Build.props` (compiler settings), `Directory.Packages.props` (all package versions), `.editorconfig`.
 - `scripts/create-schemas.sh` / `.ps1`: idempotent SQL of each schema from the migrations. **Each new version (module, service) adds its entry to both scripts.**
@@ -21,13 +21,13 @@ The API (paths, JSON shapes, status codes, ProblemDetails errors) is identical i
 
 ## Architecture rules are tests
 
-Each version has `Shop.<V>.ArchitectureTests` (ArchUnitNET). They encode the rules of that version's architecture (for example, in 02 `Domain` depends on nothing). **Never weaken or delete an architecture test to make a change compile**: change the design instead, or stop and ask. Each version's `docs/adr/` explains the decisions behind the rules.
+Each version has `Shop.<V>.ArchitectureTests` (ArchUnitNET in 01–03; project files, compiled references and IL read with Mono.Cecil in 04–05). They encode the rules of that version's architecture (for example, in 02 `Domain` depends on nothing). **Never weaken or delete an architecture test to make a change compile**: change the design instead, or stop and ask. Each version's `docs/adr/` explains the decisions behind the rules.
 
 ## Conventions
 
-- Project names: `Shop.<V>.<Part>` with `<V>` = `Layered`, `Clean`, `Slice`, `Modular`, `Micro`; tests `Shop.<V>.UnitTests`, `Shop.<V>.ArchitectureTests`, `Shop.<V>.ContractTests`.
+- Project names: `Shop.<V>.<Part>` with `<V>` = `Layered`, `Clean`, `Slice`, `Modular`, `Micro`; tests `Shop.<V>.UnitTests`, `Shop.<V>.ArchitectureTests`, `Shop.<V>.ContractTests` (05 adds `Shop.Micro.IntegrationTests`: outbox and inbox against real PostgreSQL and RabbitMQ).
 - Ports: 01 → 5101, 02 → 5102, 03 → 5103, 04 → 5104, 05 gateway → 5105. Connection string: `Host=localhost;Port=5433;Database=<db>;Username=shop;Password=shop`.
-- Stock concurrency: every version must pass `ConcurrentOrdersForLastUnits_NeverOversell` (optimistic concurrency with retry, or a conditional `UPDATE`); the version's guide chapter says which.
+- Stock concurrency: every version must pass `ConcurrentOrdersForLastUnits_NeverOversell` (optimistic concurrency with retry, a conditional `UPDATE`, or a row lock with `SELECT … FOR UPDATE`); the version's guide chapter says which.
 - Architecture tests: one test per rule, named after the rule (`Domain_DependsOnNothing`), with a comment on why the rule exists.
 - Logging through the `[LoggerMessage]` source generator (analyzer CA1848 is on); culture-safe string calls (`ToUpperInvariant`, `CultureInfo.InvariantCulture`).
 - Everything in English. Comments explain the *why*. A class that introduces a concept has a `// Guide: §N.M` pointer.
@@ -53,6 +53,7 @@ scripts/create-schemas.sh [version]                              # idempotent SQ
 dotnet tool restore                                              # dotnet-ef from .config/dotnet-tools.json
 dotnet ef migrations add <Name> --project 01-layered/src/Shop.Layered.Data   # new migration (design-time factory, no startup project)
 dotnet ef migrations add <Name> --project 04-modular-monolith/src/Shop.Modular.Catalog   # 04: one migrations project per module (Catalog, Ordering.Infrastructure, Payments)
+dotnet ef migrations add <Name> --project 05-microservices/src/Shop.Micro.Catalog.Api   # 05: one per service (Catalog.Api, Ordering.Infrastructure, Payments.Api)
 ```
 
 `dotnet test` runs on Microsoft.Testing.Platform (set in `global.json`). Docker Desktop must be running for contract tests and Testcontainers.

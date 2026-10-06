@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <!-- No Docker, no broker: Ordering's Domain and Application need nothing else (its clean style), and
+       Catalog and Payments expose their internals to this project only, for their few pure rules. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Shop.Micro.Ordering.Application\Shop.Micro.Ordering.Application.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Micro.Catalog.Api\Shop.Micro.Catalog.Api.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Micro.Payments.Api\Shop.Micro.Payments.Api.csproj" />
+  </ItemGroup>
+
+</Project>

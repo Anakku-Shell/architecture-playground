@@ -1,0 +1,28 @@
+<!--
+  AppHost: the Aspire orchestrator of version 05. Running it starts PostgreSQL and RabbitMQ in containers,
+  the three services and the gateway, and opens the Aspire dashboard (logs, traces, metrics of every
+  process in one place). Development only: in production each piece is deployed on its own.
+  The SDK version is pinned in global.json ("msbuild-sdks"). Guide: §8.3.
+-->
+<Project Sdk="Aspire.AppHost.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- ASPIRE010: without the Aspire CLI the SDK takes the orchestrator (DCP) and the dashboard from NuGet
+         packages, which is all this playground needs. Installing the CLI is optional (Guide §1.4). -->
+    <NoWarn>$(NoWarn);ASPIRE010</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" />
+    <PackageReference Include="Aspire.Hosting.RabbitMQ" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Micro.Catalog.Api\Shop.Micro.Catalog.Api.csproj" />
+    <ProjectReference Include="..\Shop.Micro.Ordering.Api\Shop.Micro.Ordering.Api.csproj" />
+    <ProjectReference Include="..\Shop.Micro.Payments.Api\Shop.Micro.Payments.Api.csproj" />
+    <ProjectReference Include="..\Shop.Micro.Gateway\Shop.Micro.Gateway.csproj" />
+  </ItemGroup>
+
+</Project>
