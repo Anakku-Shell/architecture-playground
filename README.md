@@ -14,6 +14,23 @@ The shop has three parts: **Catalog** (products and stock), **Ordering** (orders
 
 Everything is explained in **[docs/ARCHITECTURE_GUIDE.md](docs/ARCHITECTURE_GUIDE.md)**: the concepts from zero, how a request travels through each architecture layer by layer, how the styles combine, and how to choose between them.
 
+## How to read this repo
+
+1. **The map.** [Guide chapter 3](docs/ARCHITECTURE_GUIDE.md#3-the-map-and-the-primers): what architecture is, the four independent axes (code organisation, domain modelling, deployment, data flow) and short primers on DDD, CQRS, events and transactions.
+2. **One version at a time, in order.** Each folder's README is a summary; its guide chapter (4–8) follows `POST /api/orders` through the layers. Each version was built by copying the previous one and refactoring it; the "What changed" section of each chapter says what moved and why.
+3. **Side by side.** [Chapter 9](docs/ARCHITECTURE_GUIDE.md#9-combining-styles) puts the same request in all five versions in one table and shows how styles combine; [chapter 10](docs/ARCHITECTURE_GUIDE.md#10-decision-guide) turns them into a decision guide and compares the five versions in numbers.
+4. **Beyond the five.** [Chapter 11](docs/ARCHITECTURE_GUIDE.md#11-styles-explained-but-not-implemented) explains the styles not built here (MVC/MVVM, microkernel, pipes and filters, event-driven, event sourcing, SOA, serverless, micro-frontends). [Chapter 12](docs/ARCHITECTURE_GUIDE.md#12-architecture-and-ai-agents) covers how to state and enforce architecture rules for AI coding agents; this repo's own [`CLAUDE.md`](CLAUDE.md) is the example. The [appendix](docs/ARCHITECTURE_GUIDE.md#appendix-javaspring-equivalences) maps every piece to Java and Spring.
+
+| | 01 | 02 | 03 | 04 | 05 |
+|---|---|---|---|---|---|
+| Projects in `src/` | 3 | 4 | 1 | 11 | 11 |
+| Deployables | 1 | 1 | 1 | 1 | 4 |
+| C# lines in `src/` (without migrations) | 1,014 | 1,604 | 1,498 | 1,890 | 2,767 |
+| Architecture rules (tests) | 5 | 8 | 6 | 12 | 11 |
+| `POST /api/orders` answers | `201` | `201` | `201` | `201` | `202`, then the saga |
+
+The full comparison, with what each version makes easy and hard, is in [guide §10.3](docs/ARCHITECTURE_GUIDE.md#103-the-five-versions-compared).
+
 ## Prerequisites
 
 | Tool | Version | How to install | Notes |

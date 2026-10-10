@@ -2,7 +2,9 @@
 
 This guide goes with the code. It explains software architecture from zero. Every acronym is spelled out the first time it appears, and every idea gets a plain-language introduction before any code. Then it walks through the same shop built five different ways.
 
-**How to read it.** Chapters 1–2 are practical: install, run, find your way around the repo. Chapter 3 is the map: the vocabulary and the ideas every later chapter relies on. Chapters 4–8 take one architecture each, in the order they were built, and follow a real request through its layers. Chapters 9–12 put it all together: how styles combine, how to choose, and what this means when you work with AI coding agents. Unknown word? See the [Glossary](#glossary).
+**How to read it.** Chapters 1–2 are practical: install, run, find your way around the repo. Chapter 3 is the map: the vocabulary and the ideas every later chapter relies on. Chapters 4–8 take one architecture each, in the order they were built, and follow a real request through its layers. Chapters 9–12 put it all together: how styles combine, how to choose, the styles not built here, and what this means when you work with AI coding agents. Chapter 13 lists the books and articles behind it all, and the appendix maps every .NET piece to Java and Spring. Unknown word? See the [Glossary](#glossary).
+
+**A shorter path.** Short on time? Read §3.2 (the four axes), §9.1 (the same request in all five versions), §10.3 (the comparison table) and the "Trade-offs" section of each version chapter.
 
 ## Contents
 
@@ -87,13 +89,49 @@ This guide goes with the code. It explains software architecture from zero. Ever
    8. [What changed from version 04](#88-what-changed-from-version-04)
    9. [Trade-offs](#89-trade-offs)
    10. [Interview questions](#810-interview-questions)
-9. Combining styles — *coming in phase 06*
-10. Decision guide — *coming in phase 06*
-11. Styles explained but not implemented — *coming in phase 06*
-12. Architecture and AI agents — *coming in phase 06*
-13. References — *coming in phase 06*
+9. [Combining styles](#9-combining-styles)
+   1. [The same request in five versions](#91-the-same-request-in-five-versions)
+   2. [The five versions on the four axes](#92-the-five-versions-on-the-four-axes)
+   3. [Choosing per bounded context](#93-choosing-per-bounded-context)
+   4. [Hexagonal inside a microservice](#94-hexagonal-inside-a-microservice)
+   5. [CQRS and slices on any style](#95-cqrs-and-slices-on-any-style)
+   6. [How a system moves between styles](#96-how-a-system-moves-between-styles)
+   7. [Interview questions](#97-interview-questions)
+10. [Decision guide](#10-decision-guide)
+    1. [What drives the decision](#101-what-drives-the-decision)
+    2. [Decision points](#102-decision-points)
+    3. [The five versions compared](#103-the-five-versions-compared)
+    4. [Common mistakes](#104-common-mistakes)
+    5. [Keeping a decision honest](#105-keeping-a-decision-honest)
+    6. [Interview questions](#106-interview-questions)
+11. [Styles explained but not implemented](#11-styles-explained-but-not-implemented)
+    1. [MVC, MVP and MVVM: patterns for user interfaces](#111-mvc-mvp-and-mvvm-patterns-for-user-interfaces)
+    2. [Microkernel (plug-in) architecture](#112-microkernel-plug-in-architecture)
+    3. [Pipes and filters](#113-pipes-and-filters)
+    4. [Event-driven architecture](#114-event-driven-architecture)
+    5. [Event sourcing](#115-event-sourcing)
+    6. [SOA and the enterprise service bus](#116-soa-and-the-enterprise-service-bus)
+    7. [Serverless](#117-serverless)
+    8. [Micro-frontends](#118-micro-frontends)
+    9. [Other names you will hear](#119-other-names-you-will-hear)
+12. [Architecture and AI agents](#12-architecture-and-ai-agents)
+    1. [Why agents and architecture meet](#121-why-agents-and-architecture-meet)
+    2. [Tell: ADRs and agent instruction files](#122-tell-adrs-and-agent-instruction-files)
+    3. [Enforce: guardrails that fail the build](#123-enforce-guardrails-that-fail-the-build)
+    4. [Verify: reviewing agent output against the rules](#124-verify-reviewing-agent-output-against-the-rules)
+    5. [Structures that help agents](#125-structures-that-help-agents)
+    6. [How this repo was built](#126-how-this-repo-was-built)
+    7. [Interview questions](#127-interview-questions)
+13. [References](#13-references)
+    1. [Architecture in general](#131-architecture-in-general)
+    2. [Layered, Clean, Hexagonal, Onion](#132-layered-clean-hexagonal-onion)
+    3. [Vertical slices and CQRS](#133-vertical-slices-and-cqrs)
+    4. [Domain-Driven Design](#134-domain-driven-design)
+    5. [Modular monoliths and microservices](#135-modular-monoliths-and-microservices)
+    6. [Messaging, consistency and data](#136-messaging-consistency-and-data)
+    7. [Decisions, rules and agents](#137-decisions-rules-and-agents)
 - [Glossary](#glossary)
-- Appendix: Java/Spring equivalences — *coming in phase 06*
+- [Appendix: Java/Spring equivalences](#appendix-javaspring-equivalences)
 
 ---
 
@@ -369,7 +407,7 @@ IArchRule rule = Types().That().ResideInAssembly(DomainAssembly)
 rule.Check(Architecture);
 ```
 
-These tests are the executable form of the architecture. If someone breaks a rule (a colleague in a hurry, or an AI agent that does not know the design), a test fails and says which rule and why. Chapter 12 builds on this.
+These tests are the executable form of the architecture. If someone breaks a rule (a colleague in a hurry, or an AI agent that does not know the design), a test fails and says which rule and why. [Chapter 12](#12-architecture-and-ai-agents) builds on this.
 
 **Testing tools:**
 - **xUnit v3**: the test framework (`[Fact]` for a test, `[Theory]` for a test with several inputs, plain `Assert`). It runs on Microsoft.Testing.Platform (§1.1).
@@ -435,7 +473,7 @@ Architecture discussions get confusing because people compare styles that answer
 | **C. Deployment** | How many processes, and how do they talk? | Monolith · Modular monolith · Microservices (also SOA, serverless) | 01–03 monolith, 04 modular, 05 microservices |
 | **D. Data and command flow** | How do changes and reads move through the system? | Synchronous calls · CQRS · domain/integration events · messaging · sagas · event sourcing | 03 CQRS, 04 in-process events, 05 messaging + saga |
 
-A real system picks **one option per axis**, and often a different one per part of the system. Version 05 is "microservices (C), split by bounded context (B), each service with its own internal style (A), talking through messages and a saga (D)". Chapter 9 comes back to this map with all five versions on it.
+A real system picks **one option per axis**, and often a different one per part of the system. Version 05 is "microservices (C), split by bounded context (B), each service with its own internal style (A), talking through messages and a saga (D)". [§9.2](#92-the-five-versions-on-the-four-axes) comes back to this map with all five versions on it.
 
 **Words you will meet everywhere:**
 - **Deployable / deployment unit**: something you can start and ship on its own (a web app, a service).
@@ -454,12 +492,12 @@ A real system picks **one option per axis**, and often a different one per part 
 *Axis C — how many processes*
 - **Modular monolith**: one deployable, split inside into modules with strict boundaries. Chapter 7.
 - **Microservices**: each business capability is a separate, independently deployable service with its own database, and services talk over the network. Chapter 8.
-- **SOA** (Service-Oriented Architecture): the 2000s ancestor of microservices: large shared services, often connected through a central "enterprise service bus". Common in big, older enterprises. Chapter 11.
-- **Serverless**: you deploy individual functions (Azure Functions, AWS Lambda) and the cloud runs them on demand; there is no server for you to manage. Chapter 11.
+- **SOA** (Service-Oriented Architecture): the 2000s ancestor of microservices: large shared services, often connected through a central "enterprise service bus". Common in big, older enterprises. See [§11.6](#116-soa-and-the-enterprise-service-bus).
+- **Serverless**: you deploy individual functions (Azure Functions, AWS Lambda) and the cloud runs them on demand; there is no server for you to manage. See [§11.7](#117-serverless).
 
 *Axis D — how changes flow*
 - **CQRS, events, messaging, sagas**: see the primers §3.8–§3.10.
-- **Event sourcing**: instead of storing the current state ("stock = 3"), you store every event that happened ("added 5", "reserved 2") and compute the state by replaying them. It gives a full history, but it is a big step up in complexity. Chapter 11.
+- **Event sourcing**: instead of storing the current state ("stock = 3"), you store every event that happened ("added 5", "reserved 2") and compute the state by replaying them. It gives a full history, but it is a big step up in complexity. See [§11.5](#115-event-sourcing).
 
 ### 3.3 Clean Code is not Clean Architecture
 
@@ -2534,40 +2572,663 @@ The architecture tests here guard the first and fourth signs; the others need re
 
 ---
 
+## 9. Combining styles
+
+Chapters 4–8 took one architecture at a time. Real systems are rarely one style: they pick one option per axis (§3.2), and often a different option per part of the system. This chapter puts the five versions next to each other, then looks at the combinations they already contain.
+
+### 9.1 The same request in five versions
+
+`POST /api/orders` with one line of two units and enough stock, as told in §4.5, §5.5, §6.5, §7.5 and §8.6. One row per step, one column per version:
+
+| Step | 01 Layered | 02 Clean / Hexagonal | 03 Vertical Slice | 04 Modular monolith | 05 Microservices |
+|---|---|---|---|---|---|
+| **Who receives it** | `OrderEndpoints` (Api layer) | `OrderEndpoints` (driving adapter) | `PlaceOrderEndpoint`, inside the slice file | Ordering's `OrderEndpoints`, mapped by the Host | The gateway (YARP), then Ordering's `OrderEndpoints` in another process |
+| **What it hands over** | `OrderLineInput[]` | `PlaceOrderCommand` | Nothing: the endpoint *is* the use case | `PlaceOrderCommand` | `PlaceOrderCommand` |
+| **Input validation** | `OrderService.Validate` | `PlaceOrder.Validate` | `Validate` in the slice | `PlaceOrder.Validate` in Ordering | `PlaceOrder.Validate` in Ordering |
+| **Names and prices come from** | `ShopDbContext`, read by the Business layer | `IProductRepository` port → EF adapter | `ShopDbContext`, read by the slice | `ICatalogQueries` (Catalog's contract), in process | `ICatalogClient` port → **HTTP call** to Catalog |
+| **"All lines or none" is decided by** | `ProductService.TryReserveStockAsync` (SQL) + rollback | `OrderFulfillment` (domain service) | `OrderFulfillment` (same domain as 02) | Catalog's `OrderPlacedConsumer` | Catalog's `ReserveStockConsumer` |
+| **The order's state is set by** | The service, assigning `Status` | `Order.Place` / `Order.Reject` | `Order.Place` / `Order.Reject` | `Order.Place`, then `ConfirmStockReserved` | `Order.Place`, then `OrderSaga` |
+| **Stock concurrency** | Conditional `UPDATE … WHERE stock >= n` | Optimistic (`xmin`) + retry | Optimistic (`xmin`) + retry | Pessimistic (`SELECT … FOR UPDATE`) | Pessimistic, inside Catalog |
+| **Transactions** | 1, opened by the service | 1, inside `SaveChanges` | 1, inside `SaveChanges` | 1, shared by every module (Ordering and Catalog act) | **3**, in two databases, linked by messages |
+| **How the contexts talk** | Method call between services | Domain service over aggregates | Domain service over aggregates | In-process events | RabbitMQ commands and replies, outbox and inbox |
+| **Response** | `201`, final state | `201`, final state | `201`, final state | `201`, final state (`Pending` never visible) | **`202`**, `Pending`; the final state comes later |
+| **A failure in stock handling** | Rolls everything back | Rolls everything back | Rolls everything back | Rolls back all modules | Rolls back Catalog's step only; the message is retried, then dead-lettered |
+| **Files to read** | 3 projects, 2 services | 4 projects, use case + domain service + adapters | 1 file + the domain | 3 modules + the bus + the shared transaction | 3 services + Messaging + gateway + AppHost |
+
+Read the table by columns and the trend is clear. Each version moves a decision further from where the request arrives. In 01, one class does almost everything. In 05, five processes take part (the gateway, three services and RabbitMQ, plus two databases), and the client gets its answer before the work is done.
+
+Read it by rows, and one thing barely changes: **input validation and the order's rules stay in the same shape from 02 onwards.** They moved from project to module to service, but the `Order` aggregate of 05 is almost the one of 02. Good domain code survives a change of deployment style. That is the practical argument for keeping the rules away from the technology (§3.6).
+
+### 9.2 The five versions on the four axes
+
+The map of §3.2, filled in. Versions 04 and 05 need one row per context, because they choose per context:
+
+| Version / part | A. Code organisation | B. Domain modelling | C. Deployment | D. Data and command flow |
+|---|---|---|---|---|
+| 01 | N-tier layered | Anemic (EF entities) | Monolith | Synchronous, one transaction |
+| 02 | Clean / Hexagonal | DDD tactical (aggregates, value objects) | Monolith | Synchronous, one transaction |
+| 03 | Vertical Slice | DDD tactical (same domain as 02) | Monolith | Light CQRS (projections for queries) |
+| 04 · Catalog | CRUD / Transaction Script | Plain rows and rule functions | Modular monolith | In-process events, one shared transaction |
+| 04 · Ordering | Clean / Hexagonal | DDD tactical | Modular monolith | Publishes and consumes in-process events |
+| 04 · Payments | Vertical Slice | A record, no model | Modular monolith | Consumes and publishes in-process events |
+| 05 · Catalog | CRUD | Plain rows and rule functions | Microservice | Messages, outbox and inbox; one internal HTTP endpoint |
+| 05 · Ordering | Clean / Hexagonal | DDD tactical | Microservice | Saga orchestrator; one synchronous call to Catalog |
+| 05 · Payments | Vertical Slice | A record, no model | Microservice | Messages, outbox and inbox |
+
+Strategic DDD (bounded contexts) is the column that does not appear, because it sits under all of them: from 04 on, it decides where the rows are cut.
+
+### 9.3 Choosing per bounded context
+
+Versions 04 and 05 give each context the style its rules deserve ([ADR 0002 of 04](../04-modular-monolith/docs/adr/0002-style-per-module.md)):
+
+- **Catalog is CRUD.** A product has field checks and no lifecycle. Endpoints use the DbContext directly and the rules are plain functions (`ProductRules`). A repository, a use-case class or an aggregate would add files without protecting anything.
+- **Ordering is Clean / Hexagonal with a rich domain.** An order has states, transitions, money rules and a payment flow. This is where bugs cost money, so this is where the ports, the aggregate and the fast unit tests pay off.
+- **Payments is vertical slices.** Two use cases: process a payment (triggered by a message) and get a payment (triggered by HTTP). One file each.
+
+A simple way to choose, per context:
+
+| If the context… | Then a good default is… |
+|---|---|
+| stores and shows data, with field checks only | CRUD (Transaction Script), maybe in slices |
+| has states and rules that must never be bypassed | A rich domain model, with Clean / Hexagonal around it if technologies must be swappable or tested apart |
+| has many independent use cases that change at different times | Vertical slices, with a domain model only where the rules are complex |
+| talks to an unreliable external system | A port and an adapter for that system, whatever the rest looks like |
+
+What must be **the same** across contexts is the boundary: how contexts talk (contracts, events), how errors look to clients (ProblemDetails), how the code is tested from outside (the contract suite). The inside can differ; the outside cannot.
+
+The cost is real: a developer moving from Catalog to Ordering meets a different style. It works when each module states its style (here, in its ADR and in the guide) and when the boundary rules are enforced the same way for every module.
+
+### 9.4 Hexagonal inside a microservice
+
+"Microservices or hexagonal?" is the blue-or-a-car question of §3.2. A microservice is a **deployment** decision; inside it, the code still needs an organisation. The Ordering service of 05 is a small hexagon:
+
+```mermaid
+flowchart LR
+    subgraph ORD["Ordering service"]
+        direction LR
+        API["Ordering.Api<br/>HTTP endpoints<br/>(driving adapter)"]
+        SC["SagaConsumers<br/>in Ordering.Infrastructure<br/>(driving adapter: messages in)"]
+        subgraph CORE["Core"]
+            APP["Ordering.Application<br/>use cases, OrderSaga<br/>ports"]
+            DOM["Ordering.Domain<br/>Order, Money, Quantity"]
+        end
+        INF["Ordering.Infrastructure<br/>EF Core, outbox adapter,<br/>CatalogHttpClient<br/>(driven adapters)"]
+    end
+    API --> APP
+    SC --> APP
+    APP --> DOM
+    INF -. implements ports .-> APP
+    INF --> PG[(ordering database)]
+    INF --> MQ[[RabbitMQ via outbox]]
+    INF --> CAT[Catalog service over HTTP]
+```
+
+The ports in [`Ports.cs`](../05-microservices/src/Shop.Micro.Ordering.Application/Ports/Ports.cs) say what the core needs from the outside world, in its own words:
+
+| Port | What the core asks for | The adapter that answers |
+|---|---|---|
+| `IOrderRepository` | Load and save orders | EF Core |
+| `IUnitOfWork` | Commit what changed, in one local transaction | EF Core |
+| `IOutgoingMessages` | "Send this command" | Writes a row into the outbox |
+| `ICatalogClient` | "Give me names and prices for these products" | `CatalogHttpClient`, with retries and a circuit breaker |
+
+Two things in this table were *not* there in 02, and both are network concerns: sending a message and calling another service. The hexagon absorbed them as two more ports. `OrderSaga` never learns that a broker exists, so its unit tests run with fakes in milliseconds, and the architecture test `OrderingApplication_DoesNotUseEfCoreAspNetCoreOrTheBroker` keeps it that way.
+
+Notice also what the **other** services do *not* have: Catalog and Payments have no ports at all. A service is free to be simple inside. Making every microservice a four-project hexagon "because that is our template" is the per-system mistake of §9.3 again, now multiplied by the number of services.
+
+### 9.5 CQRS and slices on any style
+
+CQRS (§3.8) is axis D, so it can sit on top of any organisation on axis A:
+
+| Style | What light CQRS looks like there |
+|---|---|
+| Layered (01) | (Not done in this repo.) Separate query methods or an `OrderQueries` class in the Business layer that projects straight into response shapes, next to the services that change data |
+| Clean (02) | (Not done in this repo: 02 reads through the repositories, §6.7.) Commands go through use cases, repositories and aggregates; queries get their own **query port** (or read directly in an adapter) and return response shapes, skipping the domain. Many teams let queries bypass the repository on purpose |
+| Vertical Slice (03) | Built in: a query slice projects, a command slice loads an aggregate. The rule `Queries_DoNotModifyState` guards the split |
+| Modular monolith (04) | Per module. Catalog's list endpoint already projects; `ICatalogQueries` is a read-only contract |
+| Microservices (05) | Same per service, plus a second step when reads span services: a **read model** (a table or database built from the services' events), because there is no join across databases |
+
+The full version, separate read and write stores kept in sync by events, belongs where reads and writes have very different load or shape. It costs eventual consistency between the two (§3.10) and is rarely needed for a whole system.
+
+**Slices inside Clean Architecture.** The most common hybrid in .NET today is not on this repo's list, and it is worth knowing: keep the Clean projects (`Domain`, `Application`, `Infrastructure`, `Api`), but organise `Application` **by feature** instead of by technical kind. Instead of `Commands/`, `Queries/`, `Validators/`, `Dtos/`, there is `Orders/PlaceOrder/` with the command, its handler and its validator side by side. Version 02 already leans that way (`UseCases/Ordering/PlaceOrder.cs`). The dependency rule stays; the cohesion of a feature improves. Organisation by layer and by feature are not exclusive: one is the outer cut, the other the inner one.
+
+### 9.6 How a system moves between styles
+
+The repo was built by copying each version and refactoring it into the next. Real systems move in the same way: one step at a time, never all at once.
+
+```mermaid
+flowchart LR
+    L["01 Layered<br/>fast start"] -->|rules grow| C["02 Clean<br/>rules in the centre"]
+    C -.->|alternative: organise by feature| S["03 Slices<br/>organise by feature"]
+    S -->|several areas, several people| M["04 Modular monolith<br/>boundaries by context"]
+    M -->|one module needs to deploy,<br/>scale or fail alone| X["05 Microservices<br/>one service at a time"]
+    X -.->|boundaries were wrong,<br/>costs too high| M
+```
+
+- **The arrows are triggers, not a ladder.** Most systems should stop at 03 or 04. Moving right is justified only by a problem the next style solves (chapter 10).
+- **04 → 05 was almost mechanical** because the modules already talked like services (§8.8). Starting from 01, the same split would have meant first finding the boundaries inside tangled services. That is why the modular monolith is the usual stepping stone.
+- **The dashed arrow exists.** Teams do merge services back when the boundaries were wrong or the operational cost outweighs the independence. It is easier when each service kept a clean inside (§8.6, "Merge two services back").
+- **Extracting a service from a running system** usually follows the **strangler fig** pattern: put a proxy in front (a gateway like 05's), move one route at a time to the new service, and remove the old code when nothing calls it any more. The name comes from a fig that grows around a tree until it replaces it.
+
+### 9.7 Interview questions
+
+1. **Can you use Clean Architecture and microservices together?**
+   Yes, and they answer different questions. Microservices decide how many deployables there are (axis C); Clean Architecture decides how the code inside one deployable is arranged (axis A). A service with complex rules can be hexagonal inside, as 05's Ordering is, and a simple one can be plain CRUD.
+2. **Should every module or service use the same internal architecture?**
+   Not necessarily. The boundary between them (contracts, error format, how they talk, how they are tested) should be uniform; the inside should match each context's complexity. The cost is that developers switch styles between modules, so each module's style must be stated and its rules enforced.
+3. **Is CQRS an architecture?**
+   It is a pattern on the data-flow axis. Light CQRS (separate command and query paths over one database) fits any code organisation and is cheap. Full CQRS (separate stores synchronised by events) adds eventual consistency and is worth it only for very different read and write needs.
+4. **How would you move a layered monolith towards microservices?**
+   First find the bounded contexts and turn them into modules with enforced boundaries inside the monolith (a modular monolith), with each module owning its tables. Then extract one module at a time behind a proxy (strangler fig), replacing in-process calls with messages and adding an outbox, an inbox and sagas where transactions used to be. Stop as soon as the remaining modules have no reason to leave.
+5. **Where do the business rules go in a microservice?**
+   In that service's domain code, as in any application: the deployment style does not change where rules belong. What changes is that rules spanning services can no longer run in one transaction, so they become sagas with compensations, or the boundary is redrawn so the rule fits inside one service.
+
+---
+
+## 10. Decision guide
+
+There is no best architecture, only a best fit for a problem, a team and a moment (§3.1). This chapter turns the five versions into a way of choosing.
+
+### 10.1 What drives the decision
+
+Architects call the qualities a system must have **quality attributes** (or, informally, the "-ilities"): maintainability, testability, scalability, availability, performance, deployability, security. The functional requirements say *what* the system does; the quality attributes say *how well*, and they are what an architecture is chosen for. Two systems with the same features can need very different architectures because their quality attributes differ.
+
+Ask these questions, in this order. The early ones rule out more options than the later ones:
+
+1. **How complex are the business rules?** Data with field checks, or states and invariants that must never be broken? This decides axis B (anemic or rich model) and pushes axis A (CRUD, slices or Clean).
+2. **How many distinct business areas are there, and how well do you know their boundaries?** One area: a monolith in any style. Several areas with known boundaries: modules. Boundaries still moving: keep them cheap to move (a monolith, or a modular monolith).
+3. **How many teams, and must they release independently?** One team rarely needs more than one deployable. **Conway's law** says that a system's structure tends to copy the communication structure of the organisation that builds it. If three teams must ship on their own schedules, three deployables may follow; if one team owns everything, splitting into services creates coordination nobody needed. Some organisations use the law on purpose and shape their teams to get the architecture they want, the **inverse Conway manoeuvre**.
+4. **Do parts of the system have very different needs for scale, availability or technology?** A catalogue read a thousand times per order, or a payment part that must keep working when the rest is down, can justify a separate deployable.
+5. **How long will the system live, and how likely are its technologies to change?** Long-lived systems with replaceable infrastructure profit from ports and adapters; a three-month prototype does not.
+6. **What can the team operate?** Microservices need messaging, tracing, deployment automation and on-call habits. Without them, the architecture fails in production however good the code is.
+
+**Write the answers down.** An **ADR** records the decision, the alternatives and the consequences (§2.10). The questions above are a good "Context" section.
+
+### 10.2 Decision points
+
+**Axis A: inside one deployable**
+
+| Pick… | When… | Avoid when… |
+|---|---|---|
+| CRUD / Transaction Script | Data in, data out, field checks; admin screens, catalogue maintenance | Rules about states and invariants keep appearing in several places |
+| Layered | A small or short-lived app, a team that needs the most familiar structure, few rules | The rules must be tested without a database, or the infrastructure may change |
+| Vertical Slice | Many use cases that change independently; most line-of-business APIs | Several delivery mechanisms must share the same use cases, or the data-access technology may change |
+| Clean / Hexagonal | Rich rules, a long life, technologies to isolate, fast tests of business logic | Thin CRUD, prototypes, tools: ceremony without protection |
+
+**Axis B: domain modelling**
+
+| Pick… | When… |
+|---|---|
+| Anemic model / plain records | The "rules" are validation of fields |
+| Tactical DDD (aggregates, value objects) | The model has states and invariants, and bugs in them are expensive |
+| Strategic DDD (bounded contexts) | Always worth doing on paper. In code, as soon as there are several business areas or teams |
+
+**Axis C: deployment**
+
+| Pick… | When… |
+|---|---|
+| Monolith | One area, one team, or the start of anything |
+| Modular monolith | Several areas, one or a few teams; the default for a new product of real size |
+| Microservices | Several teams that must release independently, parts with very different scaling or availability needs, boundaries that have proven stable |
+
+**Axis D: data and command flow**
+
+| Pick… | When… |
+|---|---|
+| Synchronous calls, one transaction | Everything is in one database: the simplest correct choice |
+| Light CQRS | Reads and writes have different shapes; almost always cheap |
+| In-process events | Modules should not know each other, but still share a process and a transaction |
+| Messaging + outbox/inbox + sagas | Contexts live in different processes and databases |
+| Event sourcing | The history itself is a business requirement (audit, "what did the account look like on 3 March?") (§11.5) |
+
+The same questions as a picture, for one part of a system:
+
+```mermaid
+flowchart TD
+    A{Several business areas?} -->|No| B{Rich rules and states?}
+    A -->|Yes| C{Must parts deploy, scale or fail independently?}
+    B -->|No| B1[CRUD or Layered]
+    B -->|Yes, many use cases| B2[Vertical Slice + domain model]
+    B -->|Yes, technologies to isolate| B3[Clean / Hexagonal + DDD]
+    C -->|No, or not yet| D[Modular monolith<br/>style per module]
+    C -->|Yes, and the team can operate it| E[Microservices<br/>extract one at a time]
+    C -->|Yes, but no ops experience yet| D
+    D -.->|each module| B
+    E -.->|each service| B
+```
+
+### 10.3 The five versions compared
+
+Measured on this repo. The lines of code come from `git ls-files '<folder>/*.cs' | xargs wc -l`, split into `src/` without EF Core migrations (the hand-written application), migrations (generated) and `tests/`. Every version also runs the shared contract suite (`contract-tests/`, about 780 lines, counted once).
+
+| | 01 Layered | 02 Clean / Hexagonal | 03 Vertical Slice | 04 Modular monolith | 05 Microservices |
+|---|---|---|---|---|---|
+| **Projects** (`src/` + `tests/`) | 3 + 3 | 4 + 3 | 1 + 3 | 11 + 3 | 11 + 4 |
+| **Deployables** | 1 | 1 | 1 | 1 | 4 (3 services + gateway) |
+| **Infrastructure** | PostgreSQL | PostgreSQL | PostgreSQL | PostgreSQL, a schema per module | PostgreSQL (a database per service), RabbitMQ, Aspire |
+| **Architecture rules** | 5 | 8 | 6 | 12 | 11 |
+| **Rules enforced by** | Project references + tests | References + `internal` + tests | Tests only | References + `internal` + tests, per module | References + tests; separate processes and databases |
+| **Rule tests read** | ArchUnitNET + IL | ArchUnitNET + IL | ArchUnitNET + IL | Project files, references, IL (Mono.Cecil) | Project files, references, IL (Mono.Cecil) |
+| **Unit tests** (no database) | 12 | 75 | 62 | 81 | 99 |
+| **Other tests** | 54 contract | 54 contract | 54 contract | 56 contract | 57 contract + 5 integration |
+| **Test setup** | `WebApplicationFactory` + PostgreSQL in Testcontainers | Same | Same | Same | Aspire testing host (all services, PostgreSQL, RabbitMQ in containers) + Testcontainers for messaging |
+| **C# lines, `src/` without migrations** | 1,014 (24 files) | 1,604 (29) | 1,498 (33) | 1,890 (40) | 2,767 (47) |
+| **C# lines, migrations** | 675 | 667 | 467 | 620 | 1,077 |
+| **C# lines, `tests/`** | 351 | 1,123 | 770 | 1,360 | 1,666 |
+| **C# lines, all** | 2,040 | 3,394 | 2,735 | 3,870 | 5,510 |
+| **ADRs** | 2 | 3 | 3 | 4 | 6 |
+| **Stock concurrency** | Conditional `UPDATE` | Optimistic + retry | Optimistic + retry | `SELECT … FOR UPDATE` | `SELECT … FOR UPDATE` in Catalog |
+| **Easy** | Reading top-down; adding a CRUD field; onboarding | Changing a rule (Domain only); swapping infrastructure; unit-testing rules | Adding or changing one use case (one file); optimising one query | Giving each area its own style and owner; keeping boundaries as it grows; extracting a module later | Deploying, scaling and failing one service alone; team autonomy |
+| **Hard** | Testing rules without a database; changing storage (reaches the rules); keeping rules in one place | Adding a field (all four layers, more mapping); the amount of ceremony for simple parts | Cross-cutting changes; swapping the data-access technology; rules tested only through HTTP | Joins and shortcuts across modules (forbidden); coupling in time hidden by the in-process bus | Consistency (sagas, `202`, polling); idempotency everywhere; operations, tracing, testing the whole |
+
+Three things to notice:
+
+- **Code size follows the number of boundaries, not the number of features.** All five do the same thing. 03 is shorter than 02 because it dropped ports; 05 is the longest because messaging alone is about 750 lines.
+- **Tests move outwards as boundaries move outwards.** 02 has the most unit tests per line of code; 05 is the only one that needs integration tests of its own plumbing and a whole distributed app to run its contract tests.
+- **More rules are not a sign of more quality.** 03 has the fewest enforcement tools (a single project) and the most need for tests; 04 and 05 have many rules because they have many boundaries.
+
+### 10.4 Common mistakes
+
+**Premature microservices.** Starting a new product as microservices because "we will need to scale". The boundaries of a new product are guesses. In a monolith, a wrong guess costs a refactoring; between services, it costs a migration of data and contracts. Martin Fowler's "Monolith First" advice: start with a well-structured monolith and extract services when a real need appears. Most products never reach that point.
+
+**The distributed monolith.** Services that cannot be deployed or changed independently: shared databases, shared business libraries, chains of synchronous calls, messages changed in a breaking way. It has all the costs of microservices and none of the benefits. §8.9 lists the warning signs.
+
+**Splitting by technical layer instead of by business capability.** A "database service", a "validation service", a "persistence service" that every request passes through: every feature change touches every service. Services, like modules, should follow bounded contexts (§3.7), so that most changes stay inside one.
+
+**Entity services.** The variant of the previous mistake at the domain level: one deployed service per table (a Product service, an Order service, an OrderLine service) with CRUD endpoints. This is about deployables, not about the service classes of a layered application such as 01, and the real business process spread over callers. Each service is cohesive around data, but the behaviour is everywhere.
+
+**Layers without a reason.** An `IOrderService` with one implementation that calls an `IOrderRepository` with one implementation that calls the `DbContext`, and no decision made anywhere (the "lasagna" of §4.8). A layer or an interface earns its place when it isolates something likely to change or needs to be replaced in tests. Otherwise it is ceremony.
+
+**DDD vocabulary on an anemic model.** Folders named `Aggregates/` and `ValueObjects/` holding classes with public setters and no behaviour, and the rules still in services. The names promise protection the code does not give. Either move the rules into the model (02) or call it what it is, which is fine for simple contexts (Catalog in 04).
+
+**One style for the whole system.** Forcing every part into the most complex template the team knows (or the simplest). §9.3: the style is a choice per bounded context.
+
+**A generic repository over EF Core.** `IRepository<T>` with `GetAll`, `Add`, `Update`, `Delete` for every entity. EF Core's `DbContext` already is a unit of work and its `DbSet` a repository. A generic layer on top hides the useful parts (projections, `ExecuteUpdate`, includes) and protects nothing. Repositories pay off when they are specific to an aggregate (`IOrderRepository` in 02) and belong to the core as ports.
+
+**A shared kernel that grows.** "Common", "Core" or "Shared" projects that start with a helper and end with business logic every module depends on (§7.8). Keep shared projects technical and small, and guard them with an architecture test.
+
+**Architecture by diagram only.** Rules written on a wiki and enforced by nobody. They erode at the speed of the busiest week. Encode them: project references, `internal`, architecture tests, and an ADR that says why (chapter 12).
+
+### 10.5 Keeping a decision honest
+
+A decision is a bet on the future, so check it as the future arrives:
+
+- **ADRs** make the bet visible: what was decided, why, what it costs. When the context changes, a new ADR supersedes the old one; the old one is kept, so the history of reasoning is never lost.
+- **Fitness functions** make it measurable. The term comes from *Building Evolutionary Architectures* (Ford, Parsons, Kua): an automated check that tells whether the architecture still has a quality it was chosen for. The architecture tests of this repo are fitness functions for structure. Others measure performance (a response-time budget in a test), coupling (how many modules a typical change touches), or deployability (time from commit to production).
+- **Watch where changes land.** If most changes touch three modules, the boundaries are in the wrong place. If one module changes in every sprint and nobody else does, it may be ready to leave. Version control history answers both questions.
+
+### 10.6 Interview questions
+
+1. **How do you choose an architecture for a new system?**
+   Start from the quality attributes and constraints, not from a style: complexity of the rules, number of business areas and how well their boundaries are known, team structure, scaling and availability needs, expected lifetime, what the team can operate. For most new products that leads to a modular monolith, with a rich model only in the complex contexts. Record the decision in an ADR and protect it with tests.
+2. **When would you NOT use microservices?**
+   With one small team, a new product whose boundaries are still moving, no operational experience with messaging and tracing, or data that needs strong consistency across what would become services. A modular monolith gives the same code boundaries at a fraction of the cost.
+3. **What is Conway's law and why does it matter?**
+   Systems tend to mirror the communication structure of the organisation that builds them. It matters in both directions: service boundaries that cut across teams cause constant coordination, and some organisations deliberately shape teams to get the architecture they want (the "inverse Conway manoeuvre").
+4. **What is a fitness function?**
+   An automated check that an architectural characteristic still holds: an architecture test for dependencies, a performance budget, a limit on coupling. It turns an architecture decision into something the build verifies, instead of something people must remember.
+5. **What is wrong with a generic repository on top of EF Core?**
+   EF Core already provides a unit of work and repositories. A generic wrapper hides its useful features, leaks anyway (`IQueryable`, includes) and adds a layer that decides nothing. Aggregate-specific repositories defined as ports by the application are a different thing and can be worth it.
+
+---
+
+## 11. Styles explained but not implemented
+
+Five versions cannot cover every name you will meet. The styles in this chapter are real and common, but either they answer a question this shop does not have (a user interface, plug-ins, a data pipeline), or they would turn a playground into a platform. Each section gives the idea, an analogy, what the shop would look like in that style, and when to use it.
+
+Keep the axes of §3.2 in mind: most of these are not rivals of the five versions but choices on another axis, or patterns *inside* one part of a system.
+
+### 11.1 MVC, MVP and MVVM: patterns for user interfaces
+
+These three are about **the presentation layer**: how a user interface separates what it shows from what it knows. They are axis A, but at a smaller scale than the rest of this guide: they organise one part of one application.
+
+- **MVC (Model–View–Controller).** The **model** holds data and rules, the **view** renders it, the **controller** receives input and decides what to do. On the web, a request goes to a controller, which uses the model and picks a view to render (ASP.NET Core MVC, Spring MVC, Ruby on Rails).
+- **MVP (Model–View–Presenter).** Like MVC, but the view is passive: the **presenter** pulls data from the model and pushes it into the view through an interface, which makes the presenter testable without a UI. Common in older desktop frameworks (Windows Forms).
+- **MVVM (Model–View–ViewModel).** The **view model** exposes state and commands; the view **binds** to them, and changes flow both ways automatically. WPF and .NET MAUI use it; Vue and Angular components work in the same spirit (a template bound to a component's state).
+
+**Analogy.** A restaurant: the kitchen (model) cooks, the plate (view) presents, the waiter (controller, presenter or view model) takes the order and brings the food. The three patterns differ in how much the waiter does and whether the plate can talk to the kitchen.
+
+**The shop in this style.** The API has no views, so these patterns do not appear. A web or mobile front end for the shop would use one of them *inside the front end*, and call the same API. A front end built with Vue or Angular would follow MVVM in spirit, with components as views and view models.
+
+**When.** Whenever there is a user interface. They do not compete with Clean or Vertical Slice: an MVC web app can have a hexagonal core, with controllers as driving adapters.
+
+### 11.2 Microkernel (plug-in) architecture
+
+A small **core** provides the minimal system and an extension mechanism; features are **plug-ins** that the core discovers and loads, often at run time. The core does not know the plug-ins; the plug-ins know only the core's extension points.
+
+**Analogy.** A games console and its cartridges. The console knows how to run a cartridge; each game is written against that contract and can be added years later.
+
+**Examples.** VS Code and its extensions, browsers, Eclipse, the MSBuild task model, ASP.NET Core's own `IServiceCollection` extension methods in a small way. This repo's endpoint discovery (`IEndpoint` in 03) and module loading (`IModule` in 04) are tiny microkernels: the host finds the parts through an interface and calls them.
+
+**The shop in this style.** A core that knows products and orders, with **payment providers** and **discount rules** as plug-ins loaded from separate assemblies: a new provider ships as a new package, with no change to the core.
+
+**When.** Products that third parties extend, and systems with many variants of one thing (rules per country, connectors per vendor). The hard part is designing extension points that are stable for years: once plug-ins depend on them, every change breaks someone.
+
+### 11.3 Pipes and filters
+
+Data flows through a chain of independent steps (**filters**), connected by channels (**pipes**). Each filter takes input, transforms it and passes it on, without knowing who comes before or after.
+
+**Analogy.** A car wash: soak, brush, rinse, dry. Each station does one thing, and stations can be added, removed or reordered.
+
+**Examples.** The Unix shell (`cat log | grep error | sort | uniq -c`), ETL (Extract, Transform, Load) jobs that move data between systems, compiler stages, media processing. **The ASP.NET Core middleware pipeline is one** (§4.4): each middleware receives the request, does its part and calls the next.
+
+**The shop in this style.** Not the shop's request handling, but its **back office**: a nightly import of supplier prices (read file → parse → validate → convert currency → update Catalog), with each step a filter.
+
+**When.** Processing that is a sequence of transformations: imports, data pipelines, message processing, request pipelines. Not for business processes with branching decisions and shared state.
+
+### 11.4 Event-driven architecture
+
+A system where the main way parts interact is by **producing and reacting to events** (§3.9), usually through a broker. It is axis D taken as the organising principle of the whole system.
+
+Two shapes are often described:
+
+- **Broker topology (choreography).** No coordinator: each service reacts to events and publishes new ones. `OrderPlaced` → Catalog reserves and publishes `StockReserved` → Ordering reacts. Version 04 works this way, in process.
+- **Mediator topology (orchestration).** A coordinator receives an initial event and sends commands step by step. Version 05's `OrderSaga` is a mediator for one process.
+
+**Analogy.** A newsroom where reporters shout headlines and whoever cares picks them up, versus an editor who assigns each story.
+
+**The shop in this style.** Already half there: 05 is event-driven between services. A fully event-driven shop would also publish `ProductPriceChanged` and `StockAdjusted`, and let new consumers (search, recommendations, a reporting database) subscribe without any change to Catalog.
+
+**When.** Many consumers interested in the same facts, integration between systems that evolve separately, workloads that must absorb peaks (a queue smooths them). The costs are those of chapter 8: eventual consistency, duplicates, ordering, and flows that are hard to see without tracing.
+
+### 11.5 Event sourcing
+
+Instead of storing the current state of an aggregate, store **every event** that changed it, in order, in an **event store**, and compute the state by replaying them (§3.2).
+
+```text
+order 42:  OrderPlaced(lines, total 30.00)
+           StockConfirmed
+           PaymentRequested
+           PaymentFailed
+           OrderCancelled(PaymentDeclined)
+state  →   Cancelled, total 30.00
+```
+
+Every event in the stream is Ordering's own fact: `StockConfirmed` and `PaymentFailed` record how the order reacted to the replies of Catalog and Payments, whose own events live in their own streams.
+
+Reads that need another shape are served by **projections** (in the event-sourcing sense): read models built by consumers of the event stream, such as "orders per customer" or "revenue per day". For aggregates with long histories, a **snapshot** of the state every N events avoids replaying from the start.
+
+**Analogy.** A bank statement versus a balance. The balance (current state) tells you how much you have; the statement (events) tells you how you got there, and you can always recompute the balance from it.
+
+**The shop in this style.** Ordering is the natural candidate: its life *is* a sequence of events, and "why was this order cancelled?" becomes a query of its history. Catalog's stock could be event-sourced too (every adjustment and reservation as an event), which would make stock audits trivial.
+
+**What it costs.** Events are permanent, so their shape must be versioned forever (an event written in 2026 must still be readable in 2030). Queries across aggregates need projections, which are eventually consistent. Fixing bad data means writing compensating events, not editing a row. Developers need time to think in events. It is usually combined with CQRS: commands append events, queries read projections.
+
+**When.** When the history is a business requirement: finance, accounting, audit trails, compliance, domains where "what happened" matters as much as "what is". Not as a default persistence technique.
+
+### 11.6 SOA and the enterprise service bus
+
+**SOA** (Service-Oriented Architecture) was the 2000s answer to integrating many large applications in a company: expose each one's capabilities as **services** with formal contracts (often **SOAP**, the Simple Object Access Protocol, an XML message format, with each service described in **WSDL**, the Web Services Description Language), and connect them through an **ESB** (Enterprise Service Bus), a central piece of middleware that routes, transforms and orchestrates messages between them.
+
+**How it differs from microservices.** Both are services over a network, but:
+
+| | SOA | Microservices |
+|---|---|---|
+| Size of a service | Large, often a whole application or department | Small enough for one team and one bounded context |
+| Data | Often shared databases | A database per service |
+| Integration logic | In the central ESB ("smart pipes") | In the services ("smart endpoints, dumb pipes") |
+| Goal | Reuse of enterprise capabilities | Independent change and deployment |
+
+**Analogy.** A corporate switchboard that every call goes through, versus colleagues who have each other's direct numbers.
+
+**When you meet it.** In large, older organisations (banks, insurance, public administration). The idea of services with explicit contracts survived; the central bus, which tended to become a bottleneck and a team that every change had to wait for, mostly did not.
+
+### 11.7 Serverless
+
+You deploy **functions** (Azure Functions, AWS Lambda, Google Cloud Functions), each triggered by an event: an HTTP request, a message, a timer, a file upload. The cloud provider starts instances on demand, scales them, and bills per execution. There is no server for you to manage, though there are servers. Also called **FaaS** (Function as a Service).
+
+**Analogy.** A taxi instead of owning a car. You pay per ride, never maintain it, and it scales to as many rides as you need; but you wait for it to arrive, and long daily trips cost more than owning.
+
+**The shop in this style.** Each consumer of 05 becomes a function triggered by its queue (`ReserveStock`, `ProcessPayment`); the HTTP endpoints become HTTP-triggered functions; the outbox dispatcher becomes a timer or a database-change trigger. The internal style of each function is still a choice: the Ordering rules would still live in a domain library the functions call.
+
+**What it costs.** **Cold starts** (the first call after idle time waits for an instance to start), execution time limits, a harder local development and testing story, and **vendor lock-in**: the triggers, bindings and configuration are specific to one cloud. Costs are low for spiky or small workloads and can be high for constant heavy load.
+
+**When.** Event-driven glue, spiky or unpredictable load, scheduled jobs, small teams that do not want to run servers. Less suited to latency-critical paths and long-running work.
+
+### 11.8 Micro-frontends
+
+Microservices applied to the user interface: the front end is split into parts owned by different teams (the product page, the cart, the account area), each built and deployed independently, and composed into one page in the browser or on the server. Common techniques: a shell application that loads remote bundles at run time (Webpack or Rspack **Module Federation**, used with Angular, React or Vue), web components, or server-side composition.
+
+**Analogy.** A shopping centre: one building and one entrance, but each shop is fitted out and run by its own owner.
+
+**The shop in this style.** A Catalog team ships the product pages, an Ordering team the cart and checkout, a Payments team the payment form, each talking to its own service of 05. A shell provides the layout, navigation and login.
+
+**What it costs.** Consistent look and feel across teams, shared dependencies (two versions of a framework on one page), larger downloads, and integration testing of the whole page. As with microservices, the benefit is organisational.
+
+**When.** Large front ends with several teams that must release independently. For one team, a well-organised single front end (feature folders, lazy-loaded routes) gives most of the benefits.
+
+### 11.9 Other names you will hear
+
+| Name | In one line | Relation to this repo |
+|---|---|---|
+| **Service-based architecture** | A few coarse-grained services (often 4–12) that share one database, deployed separately (Mark Richards' term) | A pragmatic step between 04 and 05: separate deployables without a database per service |
+| **Space-based architecture** | Processing units hold data in replicated in-memory grids, and the database is written asynchronously; built for extreme, spiky load | None; it trades consistency for throughput at a scale this shop never has |
+| **Actor model** | Many small isolated objects (**actors**) with private state that communicate only by messages, one message at a time (Akka, Microsoft Orleans) | Each order could be an actor; concurrency is solved by design, since an actor handles one message at a time |
+| **Cell-based architecture** | The whole system is copied into independent **cells**, each serving a subset of customers, so a failure affects one cell only | A deployment choice on top of any style |
+| **Screaming architecture** | Robert C. Martin's idea that the top-level folders should "scream" the business (`Orders/`, `Payments/`), not the framework (`Controllers/`, `Models/`) | 03 and 04 scream; 01 whispers "Api, Business, Data" |
+| **Package by component** | Simon Brown's middle way: group code by component (a business-facing facade plus its implementation), and hide the implementation with access modifiers | Close to 04's modules, with `internal` as the hiding mechanism |
+| **BCE (Boundary–Control–Entity)** | Ivar Jacobson's 1992 split of use-case objects into boundaries (input/output), controls (use-case logic) and entities | An ancestor of Hexagonal and Clean; the same three roles as adapters, use cases and domain |
+| **C4 model** | Not a style: a way to *draw* architecture at four zoom levels (context, containers, components, code) | Useful to document any of the five versions |
+
+---
+
+## 12. Architecture and AI agents
+
+An **AI coding agent** (Claude Code, GitHub Copilot's agent mode, Cursor, Codex and others) reads a codebase, writes code, runs commands and iterates until a task looks done. It is fast and tireless, and it is also the colleague most likely to break an unwritten rule: it sees the files in front of it, not the meeting where the team decided why `Domain` must not reference EF Core.
+
+That makes architecture **more** important with agents, not less. The work splits into three verbs: **tell** the agent the rules, **enforce** them so a violation fails the build, and **verify** what it produced against them. This repo was built that way, and this chapter uses it as the example.
+
+### 12.1 Why agents and architecture meet
+
+- **Agents copy local patterns.** Asked to add a use case, an agent looks at nearby code and does the same. In a codebase with consistent structure that is exactly right; in an inconsistent one it picks a pattern at random and spreads it.
+- **Agents optimise for "it works".** The shortest path to a passing feature is often a shortcut across a boundary: an endpoint that queries the `DbContext`, a module that reads another module's table, a domain class that takes an `ILogger`. Each one compiles and passes the functional tests.
+- **Agents produce a lot of code quickly.** Review attention is the scarce resource. Whatever a machine can check should be checked by a machine, so people review what only people can judge.
+- **Agents forget between sessions.** What was agreed in one conversation is gone in the next unless it is written in the repository.
+
+Each point has the same answer: the architecture must be **written down where the agent reads it** and **encoded where the build checks it**.
+
+### 12.2 Tell: ADRs and agent instruction files
+
+**Agent instruction files** are Markdown files that coding agents load automatically at the start of every session: `CLAUDE.md` (Claude Code), `AGENTS.md` (a cross-tool convention read by several agents), `.github/copilot-instructions.md` (GitHub Copilot), and others. They are the agent's onboarding document.
+
+This repo's [`CLAUDE.md`](../CLAUDE.md) shows what belongs there:
+
+| Section | Why the agent needs it |
+|---|---|
+| What the repo is, in two lines | So the agent knows that explanations matter as much as code |
+| Layout, one line per version | So it finds the right project without searching the whole tree |
+| **"Never reference code across version folders"** | A rule that no compiler checks between separate solutions |
+| **"The public API is a contract"** | So it does not change a status code in one version only |
+| **"Architecture rules are tests… never weaken or delete an architecture test to make a change compile"** | The most important line: it closes the easiest escape |
+| Conventions (naming, errors, logging, banned packages) | So generated code looks like the rest |
+| Commands | So it can build, test and format without guessing |
+| Workflow (branch, never merge, do not install software) | The limits of what it may do on its own |
+
+What makes such a file work:
+
+- **Short and specific.** Rules the agent can act on ("errors are ProblemDetails: validation `400`, business rule `409`"), not values ("write clean code"). Every line costs attention in every session.
+- **The rule and a pointer to the why.** The file says *what*; the **ADRs** in each version's `docs/adr/` say *why*, with the alternatives that were rejected. An agent that knows why a rule exists makes better choices in cases the rule did not foresee, and is less tempted to "fix" a deliberate decision.
+- **Kept in sync.** An instruction file that describes last year's structure is worse than none. Here, every phase updated it in the same commit as the code.
+- **Scoped when it grows.** Most tools also read instruction files in sub-folders. A large repo can keep the global rules at the root and the rules of one module next to its code.
+
+### 12.3 Enforce: guardrails that fail the build
+
+An instruction is a request; a failing build is a fact. The repo uses three layers of enforcement, from cheapest to most expressive:
+
+1. **Project references.** A project that does not reference another cannot use it: the compiler stops it. 02's `Domain` references no other project of the solution, so it cannot use Infrastructure (§2.3). A reference does not stop a *package*, though: adding EF Core to `Domain` is one line in its `.csproj`, and the architecture test `Domain_DependsOnNothing` (point 3) is what catches it.
+2. **Access modifiers.** `internal` hides adapters and module internals. With a reference but no access, the code still does not compile (§5.6, §7.6).
+3. **Architecture tests.** Everything the compiler cannot see: which packages a project uses, where interfaces live, that queries do not write, that every table is in its module's schema, that integration messages live in Contracts. One test per rule, named after it, with a comment explaining why (§2.7).
+
+Three lessons from building them:
+
+- **A rule must be seen failing.** §6.6 tells how two rules passed whatever the code did: one selected nothing, the other could not see inside async lambdas. Each rule in this repo that could be broken was broken on purpose, in the places where the real code lives, before it was trusted (§8.7 notes the one the build itself refuses to break). A rule written by an agent deserves the same test.
+- **The failure message is an instruction.** When a test fails, its name (`Modules_ReferenceOtherModulesOnlyThroughContracts`) and the comment above it tell the agent what to do instead. A well-named rule turns a failure into guidance.
+- **Protect the guardrails themselves.** An agent stuck on a failing architecture test can delete it, weaken it or exclude the offending type. That is why `CLAUDE.md` forbids it explicitly, and why changes to architecture tests deserve a careful human look in every review.
+
+Other guardrails work the same way: analyzers with warnings as errors (`TreatWarningsAsErrors`, CA1848 for logging), `dotnet format --verify-no-changes`, central package management (a new package needs a visible line in `Directory.Packages.props`, where a banned one stands out in review), and the **contract tests**, which turn the public API into an executable specification no internal refactoring may change.
+
+### 12.4 Verify: reviewing agent output against the rules
+
+Tests catch what can be stated as a rule. A review catches the rest. A checklist for reviewing an agent's change, ordered by how often each problem appears:
+
+| Check | What to look for |
+|---|---|
+| **Direction of dependencies** | New `using` statements and project references. Does any inner part now know an outer one? |
+| **Where the rule landed** | Is a new business rule in the domain (or the context's rule functions), or in an endpoint, a handler or a SQL query? Is the same rule now in two places? |
+| **Boundaries** | Does a module or service read another's data, or call its internals instead of its contract? |
+| **Shared code** | Was something added to a shared project (BuildingBlocks, Messaging, a "Common" folder) that only one module needs? |
+| **Transactions and consistency** | Does the change write to two places that are not in one transaction? Is a message sent without the outbox? Is a new consumer idempotent? |
+| **Contracts** | Did a public API shape, a status code or a message change? Is it backwards compatible? |
+| **Tests** | Do the new tests fail without the change? Were existing tests changed, and why? Was an architecture test touched? |
+| **Docs** | Was the ADR, README or guide updated with the code? |
+
+Some practical habits:
+
+- **Ask the agent to name the rules it followed.** "Which ADRs and architecture rules does this change touch?" is a cheap question, and a wrong answer shows a misunderstanding before it shows up in code.
+- **Use a fresh reviewer.** The context that wrote the code shares its blind spots. Every phase of this repo ended with a separate agent session, with no memory of the implementation, reviewing the diff against the plan, the spec and the rules, and several of its findings were real defects.
+- **Review the diff, not the description.** A summary says what the agent meant to do; the diff says what it did.
+
+### 12.5 Structures that help agents
+
+Some architectural properties help an agent as much as they help a new team member:
+
+- **Locality.** A vertical slice (03) puts a use case in one file: the agent reads one file to change one behaviour, and the risk of side effects is visible. Deep layering spreads one change over many files, each a chance to get something wrong.
+- **Explicit boundaries.** Ports, `*.Contracts` projects and `internal` make the allowed paths obvious. An agent that cannot see a type cannot misuse it.
+- **Consistent conventions.** One way to report errors, one way to name tests, one way to register endpoints. Agents generalise from examples; consistent examples produce consistent code.
+- **Fast feedback.** Unit tests that run in a second (02's domain) let an agent iterate many times; a suite that needs ten minutes and five containers slows every loop. This is one more hidden cost of distribution.
+- **Executable specifications.** The shared contract suite told the agent what every version had to do, so each version could be refactored freely inside.
+
+### 12.6 How this repo was built
+
+The playground was written by an AI agent working with its owner, phase by phase:
+
+1. A **design spec** fixed the goals, the domain, the API contract and the five versions.
+2. A **plan** turned each phase into steps, with the contract tests written first (in phase 00) and run by every version.
+3. Each phase was **implemented** by copying the previous version and refactoring, with the architecture tests written for that version's rules and each rule that could be broken broken on purpose once.
+4. Each phase ended with the **checks** (build with warnings as errors, all tests, formatting), a **fresh reviewer** over the diff, fixes, and one commit.
+5. `CLAUDE.md`, the ADRs and this guide were updated in the same commit as the code, so the next session started from an accurate description.
+
+None of these steps is specific to AI. They are what a careful team does anyway. The difference is that with an agent, skipping them shows up immediately, and in quantity.
+
+### 12.7 Interview questions
+
+1. **How do you keep an AI coding agent from breaking your architecture?**
+   State the rules where it reads them (an instruction file such as `CLAUDE.md` or `AGENTS.md`, linking to ADRs for the why), enforce them where the build checks them (project references, access modifiers, architecture tests, analyzers), and review its changes against them, ideally with a fresh reviewer. Forbid weakening the tests.
+2. **What goes into an agent instruction file?**
+   What the repo is, where things are, the architectural rules and conventions that are not obvious from the code, the commands to build and test, and the limits of what the agent may do on its own. Short, specific and kept in sync with the code.
+3. **What is an architecture test, and how do you know it works?**
+   An automated test that checks structural rules: dependencies between projects or namespaces, where types live, what code may call. You know it works by breaking the rule on purpose, including in generated code such as async lambdas, and watching it fail.
+4. **Which architecture is easiest for an agent to work in?**
+   One with locality (a change in one place), explicit boundaries, consistent conventions and fast tests. Vertical slices with a domain model and enforced module boundaries score well; deep layering with implicit conventions scores badly.
+
+---
+
+## 13. References
+
+Grouped by topic, with the chapter of this guide each one supports. Books first, then articles. Where a book has several editions, the latest is worth reading.
+
+### 13.1 Architecture in general
+
+- **Mark Richards, Neal Ford**, *Fundamentals of Software Architecture* (O'Reilly, 2020; 2nd edition 2025). The styles, the quality attributes and the trade-offs, with a chapter per style, including several of chapter 11. The best single overview. [ch. 3, 10, 11]
+- **Neal Ford, Mark Richards, Pramod Sadalage, Zhamak Dehghani**, *Software Architecture: The Hard Parts* (O'Reilly, 2021). Splitting systems and data, sagas, contracts: the decisions of chapters 7–8 in depth. [ch. 7, 8, 10]
+- **Neal Ford, Rebecca Parsons, Patrick Kua** (and Pramod Sadalage in the 2nd edition), *Building Evolutionary Architectures* (O'Reilly, 2017; 2nd edition 2022). Fitness functions and architecture that can change. [§10.5, ch. 12]
+- **Len Bass, Paul Clements, Rick Kazman**, *Software Architecture in Practice* (Addison-Wesley, 4th edition 2021). The academic reference on quality attributes. [§10.1]
+- **Martin Fowler**, *Patterns of Enterprise Application Architecture* (Addison-Wesley, 2002). Where Transaction Script, Domain Model, Repository, Unit of Work and Service Layer were named. [ch. 4, 5]
+- **Matthew Skelton, Manuel Pais**, *Team Topologies* (IT Revolution, 2019). Teams and architecture together; Conway's law in practice. [§10.1]
+- **Melvin Conway**, "How Do Committees Invent?" (*Datamation*, 1968). The origin of Conway's law. [§10.1]
+- **Simon Brown**, the C4 model, [c4model.com](https://c4model.com), and "The Missing Chapter" (package by component) in Robert C. Martin's *Clean Architecture*. [§11.9]
+
+### 13.2 Layered, Clean, Hexagonal, Onion
+
+- **Alistair Cockburn**, "Hexagonal Architecture" (2005), [alistair.cockburn.us/hexagonal-architecture](https://alistair.cockburn.us/hexagonal-architecture/); and with Juan Manuel Garrido de Paz, *Hexagonal Architecture Explained* (2024). Ports and adapters from their author. [§3.4, ch. 5]
+- **Jeffrey Palermo**, "The Onion Architecture" (blog series, 2008), [jeffreypalermo.com](https://jeffreypalermo.com/2008/07/the-onion-architecture-part-1/). [§3.4]
+- **Robert C. Martin**, "The Clean Architecture" (2012), [blog.cleancoder.com](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html), and *Clean Architecture* (Prentice Hall, 2017). The dependency rule and SOLID at the level of components. [§3.4, §3.6, ch. 5]
+- **Robert C. Martin**, *Clean Code* (Prentice Hall, 2008). The other book (§3.3).
+- **Mark Seemann, Steven van Deursen**, *Dependency Injection Principles, Practices, and Patterns* (Manning, 2019). Dependency inversion and composition roots in .NET. [§3.6]
+
+### 13.3 Vertical slices and CQRS
+
+- **Jimmy Bogard**, "Vertical Slice Architecture" (2018), [jimmybogard.com](https://www.jimmybogard.com/vertical-slice-architecture/). [ch. 6]
+- **Greg Young**, "CQRS Documents" (2010). The original long explanation of CQRS and event sourcing. [§3.8, §11.5]
+- **Martin Fowler**, "CQRS" (2011), [martinfowler.com/bliki/CQRS.html](https://martinfowler.com/bliki/CQRS.html), with its warning about applying it everywhere. [§3.8, §9.5]
+
+### 13.4 Domain-Driven Design
+
+- **Eric Evans**, *Domain-Driven Design: Tackling Complexity in the Heart of Software* (Addison-Wesley, 2003). The "blue book". [§3.7]
+- **Vaughn Vernon**, *Implementing Domain-Driven Design* (Addison-Wesley, 2013), the "red book", and *Domain-Driven Design Distilled* (2016), a short introduction. Aggregate design rules. [§3.7, ch. 5]
+- **Vlad Khononov**, *Learning Domain-Driven Design* (O'Reilly, 2021). A modern, practical introduction, strong on strategic design. [§3.7, §9.3]
+- **Martin Fowler**, "Anemic Domain Model" (2003), [martinfowler.com/bliki/AnemicDomainModel.html](https://martinfowler.com/bliki/AnemicDomainModel.html). [§3.7, ch. 4]
+
+### 13.5 Modular monoliths and microservices
+
+- **Sam Newman**, *Building Microservices* (O'Reilly, 2nd edition 2021) and *Monolith to Microservices* (2019). What microservices are, and how to get there step by step. [ch. 8, §9.6]
+- **Chris Richardson**, *Microservices Patterns* (Manning, 2018) and [microservices.io](https://microservices.io), the catalogue of patterns: [saga](https://microservices.io/patterns/data/saga.html), [transactional outbox](https://microservices.io/patterns/data/transactional-outbox.html), database per service, API gateway. [ch. 8]
+- **James Lewis, Martin Fowler**, "Microservices" (2014), [martinfowler.com/articles/microservices.html](https://martinfowler.com/articles/microservices.html). The article that popularised and characterised the term. [§8.1, §11.6]
+- **Martin Fowler**, "Monolith First" (2015), [martinfowler.com/bliki/MonolithFirst.html](https://martinfowler.com/bliki/MonolithFirst.html), and "Strangler Fig Application", [martinfowler.com/bliki/StranglerFigApplication.html](https://martinfowler.com/bliki/StranglerFigApplication.html). [§9.6, §10.4]
+- **Kamil Grzybek**, *Modular Monolith with DDD*, a complete .NET reference implementation, [github.com/kgrzybek/modular-monolith-with-ddd](https://github.com/kgrzybek/modular-monolith-with-ddd). [ch. 7]
+- **Microsoft**, *.NET Microservices: Architecture for Containerized .NET Applications* (free e-book), [learn.microsoft.com](https://learn.microsoft.com/dotnet/architecture/microservices/). [ch. 8]
+
+### 13.6 Messaging, consistency and data
+
+- **Gregor Hohpe, Bobby Woolf**, *Enterprise Integration Patterns* (Addison-Wesley, 2003). The vocabulary of messaging: channels, routers, idempotent receiver, dead-letter channel. [§3.9, §8.4]
+- **Hector Garcia-Molina, Kenneth Salem**, "Sagas" (ACM SIGMOD, 1987). The original paper on long-lived transactions with compensation. [§3.10, §8.5]
+- **Martin Kleppmann**, *Designing Data-Intensive Applications* (O'Reilly, 2017). Transactions, isolation levels, replication and stream processing, explained from first principles. [§3.10, §4.5, §7.5]
+- **Martin Fowler**, "Event Sourcing" (2005), [martinfowler.com/eaaDev/EventSourcing.html](https://martinfowler.com/eaaDev/EventSourcing.html). [§11.5]
+
+### 13.7 Decisions, rules and agents
+
+- **Michael Nygard**, "Documenting Architecture Decisions" (2011), [cognitect.com](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions). The ADR format used in every version. [§2.10, §10.5]
+- **ADR GitHub organisation**, templates and tools, [adr.github.io](https://adr.github.io). [§10.5]
+- **ArchUnit** (Java), [archunit.org](https://www.archunit.org), and its .NET port **ArchUnitNET**, [github.com/TNG/ArchUnitNET](https://github.com/TNG/ArchUnitNET). [§2.7, ch. 12]
+- **AGENTS.md**, the cross-tool convention for agent instruction files, [agents.md](https://agents.md). [§12.2]
+- **Spring Modulith**, [spring.io/projects/spring-modulith](https://spring.io/projects/spring-modulith). Module rules, events and an outbox-like publication registry for Spring. [Appendix]
+
+---
+
 ## Glossary
 
 Terms are added as each chapter introduces them. The section where a term is explained is in brackets.
 
 - **ACID**: Atomicity, Consistency, Isolation, Durability, the guarantees of a database transaction. [§3.10]
 - **Acknowledgement (ack / nack)**: the consumer telling the broker a message was handled (ack: forget it) or failed (nack or reject: return it, or drop it to the dead-letter queue). Messaging acks only after the commit. [§8.4]
+- **Actor model**: a style where many small isolated objects (actors) with private state communicate only by messages and handle one message at a time (Akka, Microsoft Orleans). [§11.9]
 - **Adapter**: in Hexagonal Architecture, code that connects a port to a concrete technology (an HTTP endpoint, an EF Core repository). *Driving* adapters call the application; *driven* adapters are called by it. [§3.4]
 - **ADR**: Architecture Decision Record, a short numbered document with the context, the decision and the consequences of one architectural choice. [§2.10]
+- **Agent instruction file**: a Markdown file that AI coding agents load at the start of every session, with the repo's layout, rules, conventions and commands: `CLAUDE.md`, `AGENTS.md`, `.github/copilot-instructions.md`. [§12.2]
 - **Aggregate / aggregate root**: a cluster of domain objects changed as one unit through a single entry point (the root), which enforces the rules. [§3.7]
+- **AI coding agent**: a tool that reads a codebase, writes code, runs commands and iterates on a task (Claude Code, GitHub Copilot's agent mode, Cursor, Codex). [§12]
 - **Analyzer**: a compiler plug-in that reports code problems as warnings with an ID (`CA…`, `IDE…`). [§2.6]
 - **Anemic domain model**: domain classes with data but no behaviour; the rules live in service classes. [§3.7]
 - **API gateway**: the single entry point of a distributed system; it forwards each request to the service that owns it and adds cross-cutting concerns such as timeouts (YARP in 05). [§1.4, §8.6]
 - **AppHost**: the Aspire project that describes a distributed application in C# (containers, databases, services, references, start order) and runs it for development. Not deployed. [§8.3]
 - **Architecture test**: an automated test that checks the dependency rules of an architecture (ArchUnitNET here). [§2.7]
+- **ArchUnit**: the original Java library for architecture rules as tests; ArchUnitNET is its .NET port. [Appendix]
 - **ArchUnitNET**: a .NET library to write architecture rules as tests. [§2.7]
 - **Aspire**: Microsoft's toolkit (formerly ".NET Aspire") to run, wire and observe a distributed application locally. The AppHost describes the system; the dashboard shows logs, traces and metrics of every process. [§1.4, §8.3]
 - **Assembly**: the compiled output of a project (`.dll` / `.exe`). [§2.2]
 - **Assembly fixture**: an xUnit v3 object created once for all the tests in an assembly. [§2.8]
 - **Asynchronous request-reply**: answering `202 Accepted` with a `Location` the client polls, because the work continues after the response. [§8.6]
 - **At-least-once delivery**: what message brokers guarantee: a message is never lost, but may arrive more than once, so consumers must be idempotent. [§7.3]
+- **BCE (Boundary–Control–Entity)**: Ivar Jacobson's 1992 split of a use case into boundary, control and entity objects; an ancestor of Hexagonal and Clean. [§11.9]
 - **Big ball of mud**: a system with no visible structure, where everything depends on everything. [§4.8]
 - **Binding (RabbitMQ)**: the rule connecting a queue to an exchange for a routing key ("deliver `ReserveStock` to the `catalog` queue"). [§8.4]
+- **BOM (Bill of Materials)**: in Maven, a POM that fixes the versions of a family of libraries (such as `spring-boot-dependencies`); the Java counterpart of central package management. [Appendix]
 - **Bounded context**: a boundary inside which one domain model and one language apply. [§3.7]
 - **Building blocks**: the small shared projects every module of a modular monolith uses (event interfaces, the bus, shared errors). Kept free of business logic, or they become a shared kernel. [§7.2]
 - **Business layer**: in a layered architecture, the layer with the rules and the transactions, between presentation and data access. [§4.1]
+- **C4 model**: Simon Brown's way to draw architecture at four zoom levels: context, containers, components, code. [§11.9]
 - **Call direction / dependency direction**: who calls whom at runtime, versus whose code references whose at compile time. [§3.6]
+- **CDC (change data capture)**: reading a database's transaction log to publish every committed change as an event (Debezium); an alternative way to feed an outbox or a read model. [Appendix]
+- **Cell-based architecture**: the whole system copied into independent cells, each serving a subset of customers, so a failure stays inside one cell. [§11.9]
 - **Central package management**: all NuGet versions in one `Directory.Packages.props`. [§2.5]
 - **Change tracker (EF Core)**: EF Core's record of every entity it loaded or was given, used to work out what to write on `SaveChanges`. Projections that return no entities are not tracked. [§6.4]
-- **Choreography / orchestration**: the two ways to coordinate a saga. In choreography each service reacts to the others' events; in orchestration one **orchestrator** sends commands and decides the next step from the replies (Ordering in 05). [§8.5]
+- **Choreography / orchestration**: the two ways to coordinate a saga. In choreography each service reacts to the others' events; in orchestration one **orchestrator** sends commands and decides the next step from the replies (Ordering in 05). [§8.5, §11.4]
 - **Circuit breaker**: after repeated failures calling a dependency, stop calling it for a while and fail at once, so a sick service is not flooded and callers do not wait. [§8.3]
 - **Clean Architecture**: Robert C. Martin's version of "business rules in the centre, dependencies point inwards" (2012/2017). [§3.4]
 - **Clean Code**: Robert C. Martin's book (2008) about writing readable code in the small. Not an architecture. [§3.3]
 - **CLI**: Command-Line Interface; here, the `dotnet` command. [§1.1]
 - **Cohesion**: how much the things inside one part belong together. High is good. [§3.5]
+- **Cold start**: the delay of the first call to a serverless function after idle time, while the platform starts an instance. [§11.7]
 - **Command**: a request to change state (`PlaceOrder`). As a message between services, it has an imperative name and exactly one receiver, which owns its type (`ReserveStock` in 05). [§3.8, §8.5]
 - **Compensating action**: a step that undoes the effect of an earlier step when a later one fails (release stock after a declined payment). [§3.10]
 - **Competing consumers**: several instances of one service reading the same queue, each message going to one of them. [§8.4]
@@ -2579,6 +3240,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Context map**: how bounded contexts relate and communicate. [§3.7]
 - **Contract test**: a test of the public API over HTTP only; here, shared by all versions. [§2.8]
 - **Contracts project**: a module's public surface in its own project (`Shop.Modular.Catalog.Contracts`): the events it publishes and the queries it answers. Other modules reference it, never the module itself. [§7.2]
+- **Conway's law**: systems tend to mirror the communication structure of the organisation that builds them. [§10.1]
 - **Coupling**: how much one part depends on another. Low is good. [§3.5]
 - **CQRS**: Command Query Responsibility Segregation, handling changes and reads separately. [§3.8]
 - **CRUD**: Create, Read, Update, Delete; an application that mostly stores and shows data. [§3.7]
@@ -2607,14 +3269,22 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Endpoint discovery**: finding every endpoint class at startup by reflection and mapping it, so no central list of routes exists (`IEndpoint` in version 03). [§6.2]
 - **Endpoint filter**: ASP.NET Core code that runs before and after one endpoint or a group of endpoints; the place for cross-cutting behaviour without a mediator. [§6.2]
 - **Entity**: a domain object with an identity that lasts through changes. [§3.7]
+- **Entity services**: one service per table with CRUD operations, and the business process spread over its callers; a common way to cut services wrongly. [§10.4]
 - **ER diagram**: Entity-Relationship diagram, a picture of the tables, their columns and how they relate. [§4.2]
+- **ESB (Enterprise Service Bus)**: central middleware of SOA that routes, transforms and orchestrates messages between services ("smart pipes"). [§11.6]
+- **ETL (Extract, Transform, Load)**: a job that reads data from one system, transforms it and writes it to another; a typical pipes-and-filters workload. [§11.3]
 - **Event**: a fact about something that happened (`OrderPlaced`). [§3.9]
-- **Event sourcing**: storing every event instead of the current state, and computing the state by replaying them. [§3.2]
+- **Event sourcing**: storing every event instead of the current state, and computing the state by replaying them. [§3.2, §11.5]
+- **Event store**: the append-only database of an event-sourced system, holding every event of every aggregate in order. [§11.5]
+- **Event-driven architecture**: a system whose parts interact mainly by publishing and reacting to events through a broker, either by choreography (broker topology) or with a coordinator (mediator topology). [§11.4]
 - **Eventual consistency**: parts of the system may disagree for a short time but converge. [§3.10]
 - **Exception handler (ASP.NET Core)**: middleware that catches exceptions thrown further down the pipeline and writes an error response; ours turns them into ProblemDetails. [§4.4]
 - **Exchange (RabbitMQ)**: the entry point messages are published to; it routes each one to the bound queues. A **topic** exchange routes by routing key (05 has one, `shop`). [§8.4]
+- **FaaS (Function as a Service)**: the serverless model where you deploy individual functions triggered by events and billed per execution. [§11.7]
 - **Feature band**: a group of SDK releases (10.0.4xx) that adds tooling features without changing the runtime. [§1.1]
+- **Fitness function**: an automated check that an architectural characteristic still holds, such as an architecture test or a performance budget. [§10.5]
 - **Foreign key (FK)**: a column whose value must exist as the primary key of another table; the database refuses rows that break it. [§4.2]
+- **Generic repository**: an `IRepository<T>` with the same CRUD methods for every entity, usually on top of an ORM that already provides them; rarely worth it. [§10.4]
 - **`global.json`**: the file that pins the .NET SDK, the test runner and project SDK versions for a folder. [§1.1]
 - **Head-of-line blocking**: one stuck item at the front of a queue holding back everything behind it; the outbox dispatcher avoids it by skipping a refused row. [§8.4]
 - **Health check**: an endpoint that reports whether a process is alive (`/alive`) or ready for traffic (`/health`: its database and queue work). Aspire waits on it before starting dependants. [§8.3]
@@ -2628,16 +3298,21 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Input validation**: checking that a request is well formed and reporting which field is wrong; done at the application boundary. Compare invariant. [§5.5]
 - **Integration event**: an event published to other bounded contexts, part of a context's public contract; carries ids and plain values only. [§3.9, §7.3]
 - **Invariant**: a rule that must always hold for an object, whoever changes it (an amount has at most two decimals). Enforced by the domain itself, unlike input validation. [§5.5]
+- **Inverse Conway manoeuvre**: shaping teams on purpose so that Conway's law produces the architecture you want. [§10.1]
 - **Isolation level**: how much concurrent transactions see of each other. PostgreSQL defaults to READ COMMITTED: each statement sees the data committed before it started. [§4.5]
+- **JPA / Hibernate**: JPA (Jakarta Persistence API) is the Java persistence standard and Hibernate its most common implementation; the Java counterparts of EF Core. [Appendix]
 - **Kestrel**: the web server built into ASP.NET Core. [§4.4]
 - **Lasagna code**: so many pass-through layers that each one adds code but no decision. [§4.8]
 - **Layer**: a group of code with one kind of responsibility, with rules about which layers it may use. [§3.2]
 - **Local tool manifest**: `.config/dotnet-tools.json`, the list of .NET tools (such as `dotnet-ef`) a repo uses; `dotnet tool restore` fetches them for that repo only. [§1.5]
 - **Lost update**: two requests read the same value, both change it, and the second write silently overwrites the first. [§7.5]
+- **Maven / Gradle**: the two common Java build tools; a Maven module or Gradle subproject plays the role of a `.csproj`. [Appendix]
 - **Mediator (pattern / library)**: an object that receives a request and dispatches it to its handler, often with a pipeline of behaviours (MediatR is the best-known .NET library). Not used here. [§6.2]
 - **Mermaid**: a text format for diagrams, rendered by GitHub and by VS Code with an extension. [§1.2]
 - **Message**: a piece of data sent from one part of a system to another, often through a broker. [§3.9]
 - **Message broker**: a server that receives messages and delivers them to consumers through queues (RabbitMQ). [§3.9]
+- **Micro-frontends**: a front end split into parts owned and deployed by different teams and composed into one page. [§11.8]
+- **Microkernel (plug-in) architecture**: a minimal core with extension points, and features delivered as plug-ins the core discovers and loads. [§11.2]
 - **Microservices**: independently deployable services, each owning one business capability and its data, talking over the network. [§3.2, §8.1]
 - **Microsoft.Testing.Platform**: the .NET 10 test runner used by `dotnet test` here (the older one is VSTest). [§1.1]
 - **Middleware**: a component of the ASP.NET Core request pipeline; each one can act before and after the next. [§4.4]
@@ -2645,9 +3320,11 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Model binding**: the framework step that turns route values, query strings and the JSON body into the parameters of an endpoint. [§4.4]
 - **Modular monolith**: one deployable split inside into modules with strict boundaries: each module owns its code, its data and a public contract. [§3.2, §7.1]
 - **Module**: a part of an application with a clear boundary and a small public surface. In version 04: Catalog, Ordering and Payments. [§3.2, §7.1]
+- **Module Federation**: a bundler feature (Webpack, Rspack) that loads code from separately deployed builds at run time; a common way to build micro-frontends. [§11.8]
 - **Mono.Cecil**: a .NET library that reads and writes compiled assemblies (their IL); ArchUnitNET is built on it, and the architecture tests use it directly to see inside lambdas. [§6.6]
 - **Monolith**: an application deployed as a single unit. [§3.2]
 - **MSBuild**: the .NET build engine that reads `.csproj` and `.props` files. [§1.1]
+- **MVC / MVP / MVVM**: Model–View–Controller, Model–View–Presenter and Model–View–ViewModel, three patterns for separating a user interface from its data and logic. [§11.1]
 - **N-tier (layered) architecture**: horizontal layers (presentation → business → data), each calling the one below. [§3.2]
 - **Nano-services**: services so small that most use cases span several of them; a sign of boundaries drawn too fine. [§8.9]
 - **Navigation property**: a property of an EF Core entity that points to related entities (`Order.Lines`). [§4.2]
@@ -2658,23 +3335,28 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Outbox (transactional)**: saving outgoing messages in the same transaction as the data and publishing them afterwards (through the outbox dispatcher), so a message goes out if and only if the change was committed. [§3.9, §8.4]
 - **Outbox dispatcher (relay)**: the background process that publishes committed outbox rows to the broker and marks them sent. [§8.4]
 - **Owned entity (EF Core)**: an entity stored and loaded only together with its owner, like order lines with their order. [§5.2]
+- **Package by component**: Simon Brown's organisation where each component is a business-facing facade plus a hidden implementation, protected by access modifiers. [§11.9]
 - **Package-by-feature**: the Java name for organising packages by feature instead of by layer; the idea behind vertical slices. [§6.1]
 - **Partial failure**: one part of a distributed system failing while the others run; every network call must expect it (timeouts, retries, a clear error such as `503`). [§8.6]
 - **Persistence ignorance**: domain classes that know nothing about how they are stored (no ORM attributes, no database types). [§5.8]
 - **Pessimistic locking**: locking the rows first (`SELECT … FOR UPDATE`) so concurrent requests wait their turn, instead of detecting conflicts afterwards (optimistic). [§7.5]
+- **Pipes and filters**: a chain of independent processing steps (filters) connected by channels (pipes); ASP.NET Core's middleware is one. [§11.3]
 - **Poison message**: a message that fails every time it is handled; without a delivery limit it would be retried forever. [§8.4]
 - **Port**: in Hexagonal Architecture, an interface defined by the application for something it needs or offers. [§3.4]
 - **PostgreSQL**: the open-source relational database used by every version. [§1.3]
+- **Premature microservices**: splitting a system into services before its boundaries are known or before any need for independent deployment exists. [§10.4]
 - **Presentation layer**: the top layer of a layered architecture; it talks to the outside world (HTTP, UI). [§4.1]
 - **Primary key (PK)**: the column that identifies each row of a table uniquely (`Id` here). [§4.2]
 - **ProblemDetails**: the standard JSON format for HTTP API errors (RFC 9457). [§3.11]
 - **Project (SDK-style)**: a `.csproj` that compiles to one assembly, with defaults supplied by the SDK. [§2.2]
-- **Projection**: a query that selects exactly the data a response needs, instead of loading whole entities. [§3.8]
+- **Projection**: a query that selects exactly the data a response needs, instead of loading whole entities. In event sourcing, also a read model built by replaying the event stream. [§3.8, §11.5]
 - **Publisher confirms**: the broker acknowledging to the publisher that it has stored a message; the outbox row is marked sent only after it. [§8.4]
+- **Quality attribute**: a property a system must have beyond its features, such as maintainability, scalability, availability or testability; what an architecture is chosen for. [§10.1]
 - **Query**: a request that reads state and changes nothing (`GetOrder`). [§3.8]
 - **Queue**: where a broker keeps messages until a consumer takes them; in 05, one durable queue per service. [§8.4]
 - **Quorum queue**: RabbitMQ's replicated, durable queue type, the recommended choice for durable queues. [§8.4]
 - **RabbitMQ**: the open-source message broker used by version 05. [§3.9]
+- **Read model**: data shaped for queries, kept separate from the model that handles commands, often built from events; needed for queries that span services. [§9.5]
 - **Read replica**: a read-only copy of a database that serves queries, so reads do not load the main database. [§6.4]
 - **Rehydration**: turning stored data back into domain objects, without re-running today's validation rules on it. [§5.2]
 - **Relaxed / strict layering**: strict means a layer may use only the layer directly below it; relaxed means any layer below. [§4.6]
@@ -2684,8 +3366,8 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **RFC**: Request for Comments, a numbered internet standard. [§3.11]
 - **Rich domain model**: entities and value objects with behaviour that protects their own rules; the opposite of an anemic model. [§5.1]
 - **Roslyn**: the C# compiler. [§1.1]
-- **Routing key**: the label a message is published with, which the exchange uses to pick queues (the message type name in 05). [§8.4]
 - **Routing**: the framework step that picks the endpoint matching a request method and path. [§4.4]
+- **Routing key**: the label a message is published with, which the exchange uses to pick queues (the message type name in 05). [§8.4]
 - **Row lock**: a lock the database takes on a row while a transaction updates it (or reads it with `SELECT … FOR UPDATE`); other writers of that row wait until it commits. [§4.5, §7.5]
 - **Row version**: a value that changes on every update of a row; comparing it at save time detects that someone else changed the row (`xmin` here). [§4.5]
 - **Runtime**: the part of .NET that runs compiled programs. [§1.1]
@@ -2693,24 +3375,31 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Sampler (tracing)**: decides which spans are recorded; 05's drops background polling so the dashboard shows only real work. [§8.3]
 - **Schema (database)**: a named namespace for tables inside one database (`catalog.products`). Version 04 gives each module its own. [§7.2]
 - **Scope (dependency injection)**: a lifetime for services; ASP.NET Core creates one per request, so scoped services are shared inside that request only. [§4.4]
+- **Screaming architecture**: Robert C. Martin's idea that the top-level structure should show the business (`Orders/`), not the framework (`Controllers/`). [§11.9]
 - **SDK**: Software Development Kit; for .NET, the runtime + C# compiler + `dotnet` CLI + MSBuild. [§1.1]
 - **`SELECT … FOR UPDATE`**: a SQL read that also locks the rows it returns until the transaction ends. [§7.5]
 - **Semantic lock**: a state that tells everyone "in progress" (`Pending`, `PaymentPending`) and makes other operations wait or be refused, instead of a database lock across services. [§8.5]
-- **Serverless**: deploying individual functions that the cloud runs on demand. [§3.2]
+- **Serverless**: deploying individual functions that the cloud runs on demand. [§3.2, §11.7]
 - **Service (layered architecture)**: a class in the business layer that groups the operations of one area (`OrderService`). [§4.2]
 - **Service (microservices)**: one independently deployable process that owns one business capability and its data. [§8.1]
 - **Service discovery**: finding another service's address by name (`http://catalog`) instead of configuring ports. [§8.3]
+- **Service-based architecture**: a few coarse-grained services deployed separately but sharing one database; a step between a modular monolith and microservices. [§11.9]
 - **ServiceDefaults**: the Aspire convention of one shared project with hosting defaults every service applies (telemetry, health checks, discovery, resilience). [§8.3]
 - **Shadow property**: a property EF Core maps to a column although the class has no such property (the row version here). [§5.2]
 - **Shared kernel**: a part of the model that several bounded contexts share and must change together. Sometimes deliberate, often an accident of a "common" project that grew. [§7.8]
 - **`SKIP LOCKED`**: a PostgreSQL option of `SELECT … FOR UPDATE` that skips rows another transaction has locked, so several workers take different rows instead of waiting. [§8.4]
 - **SKU**: Stock Keeping Unit, the shop's own unique product code. [§3.11]
+- **Snapshot (event sourcing)**: the stored state of an aggregate after N events, so it can be rebuilt without replaying its whole history. [§11.5]
 - **Snapshot (order line)**: a copy of a value taken at a moment in time, such as the product name and price when an order is placed. [§4.5]
-- **SOA**: Service-Oriented Architecture, large shared services often joined by an enterprise service bus; the ancestor of microservices. [§3.2]
+- **SOA**: Service-Oriented Architecture, large shared services often joined by an enterprise service bus; the ancestor of microservices. [§3.2, §11.6]
 - **Software architecture**: the decisions about a system's structure that are expensive to change. [§3.1]
+- **SOAP / WSDL**: Simple Object Access Protocol, an XML message format for services, and Web Services Description Language, the XML that describes a SOAP service's contract; typical of SOA. [§11.6]
 - **SOLID**: five object-oriented design principles: Single responsibility, Open/closed, Liskov substitution, Interface segregation, Dependency inversion. [§3.6]
 - **Solution (`.slnx`)**: a file that groups the projects worked on together. [§2.1]
+- **Space-based architecture**: processing units with replicated in-memory data grids and asynchronous writes to the database, built for extreme and spiky load. [§11.9]
+- **Spring Boot / Spring Modulith**: the standard Java application framework, and its library for modular monoliths (module verification, events, an event publication registry). [Appendix]
 - **State machine (async)**: the class the C# compiler generates for an `async` method or lambda; the body moves into it. Tools that inspect compiled code must attribute it back to the type that wrote it, or they miss what it does. [§6.6]
+- **Strangler fig**: replacing a system piece by piece behind a proxy, moving one route at a time to the new code until the old one can be removed. [§9.6]
 - **Strong consistency**: every reader sees the latest committed data at once, as with one database transaction. [§3.10]
 - **Test double / fake**: an object that stands in for a real dependency in a test; a fake is a small working implementation (the in-memory repositories). [§5.5]
 - **Testcontainers**: a library that starts throwaway Docker containers for tests. [§1.3]
@@ -2725,6 +3414,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Use case (interactor)**: one application operation as one class (`PlaceOrder`): validate, load, let the domain decide, save. [§5.1]
 - **Value converter (EF Core)**: code that turns a property into a column value and back (`Money` to `numeric`). [§5.2]
 - **Value object**: an immutable domain object defined only by its values (`Money`). [§3.7]
+- **Vendor lock-in**: depending on features of one provider so much that moving to another is expensive. [§11.7]
 - **Vertical Slice architecture**: code organised by use case, one slice (here one file) per use case, instead of by technical layer. [§3.2, §6.1]
 - **Volume (Docker)**: storage that outlives a container, used here to keep the database data. [§1.3]
 - **W3C Trace Context (`traceparent`)**: the standard header that carries the trace id from process to process; 05 also carries it through the outbox row and an AMQP header. [§8.3]
@@ -2733,3 +3423,109 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **xUnit**: the test framework used here (version 3). [§2.7]
 - **YAGNI**: "You Aren't Gonna Need It", do not build something until it is needed. [§5.2]
 - **YARP (Yet Another Reverse Proxy)**: Microsoft's reverse proxy library, used for 05's gateway. [§8.6]
+
+---
+
+## Appendix: Java/Spring equivalences
+
+The ideas of this guide do not depend on .NET. This appendix maps every .NET piece used here to its usual counterpart in Java with Spring Boot, so the same architectures can be recognised (and built) there. "≈" marks an equivalent that works differently enough to matter.
+
+### Build and project structure
+
+| .NET (this repo) | Java / Spring | Notes |
+|---|---|---|
+| Solution (`.slnx`) | Maven multi-module project (a parent `pom.xml`, the **POM** or Project Object Model, with `<modules>`) or Gradle multi-project build (`settings.gradle`) | |
+| Project (`.csproj`) | Maven module (`pom.xml`) or Gradle subproject (`build.gradle`) | One per layer, module or service, as here |
+| `ProjectReference` | A `<dependency>` on another module of the build | Same role: architecture enforced by the build (§2.3) |
+| `Directory.Build.props` | Parent POM `<properties>` and `<build>`, or a Gradle convention plugin | Shared compiler settings |
+| `Directory.Packages.props` (central package management) | `<dependencyManagement>` in the parent POM, a **BOM** (Bill of Materials, such as `spring-boot-dependencies`), or a Gradle version catalog (`libs.versions.toml`) | |
+| `global.json` (SDK version) | Maven toolchains, Gradle Java toolchains, or `.sdkmanrc` | |
+| NuGet | Maven Central | |
+| `internal` | Package-private (no modifier), or the Java Platform Module System's `exports` in `module-info.java` | Package-private works per package, not per project, so Java modules or ArchUnit rules fill the gap |
+| `.editorconfig` + analyzers | Checkstyle, PMD, SpotBugs, Error Prone; Spotless for formatting | |
+
+### Language and runtime
+
+| .NET | Java | Notes |
+|---|---|---|
+| `record` | `record` (Java 16+) | Both immutable data carriers |
+| `sealed` class | `final` class (or `sealed` with `permits`, Java 17+) | |
+| `decimal` | `BigDecimal` | Mind `equals` vs `compareTo` on scale in Java |
+| `Guid` | `UUID` | |
+| `TimeProvider` | `java.time.Clock` | Injected so tests control time |
+| `async`/`await`, `Task` | Blocking calls on virtual threads (Java 21+), or `CompletableFuture`, or reactive types (Project Reactor) | |
+| `[LoggerMessage]` source generator | SLF4J parameterised logging (`log.info("Order {} placed", id)`) | |
+| Dependency injection (`IServiceCollection`) | Spring's IoC (Inversion of Control) container (`@Component`, `@Service`, `@Bean`, constructor injection) | Same rule: constructor injection only |
+
+### Web and errors
+
+| .NET | Spring | Notes |
+|---|---|---|
+| ASP.NET Core Minimal APIs | Spring MVC `@RestController`, or WebFlux functional routes (`RouterFunction`) | Functional routes are the closest to Minimal APIs |
+| Kestrel | Embedded Tomcat (or Netty with WebFlux) | |
+| Middleware pipeline (§4.4) | Servlet filters and Spring `HandlerInterceptor`s | A pipes-and-filters chain too (§11.3) |
+| ProblemDetails (RFC 9457) | `ProblemDetail` (Spring 6+), with `@RestControllerAdvice` and `@ExceptionHandler` | `BusinessExceptionHandler` ≈ a `@RestControllerAdvice` |
+| Built-in validation | Jakarta Bean Validation (`@Valid`, `@NotNull`, `@Min`) | |
+| `IEndpoint` discovery (03) | Component scanning finds every `@RestController` | Spring discovers by default |
+
+### Data access and concurrency
+
+| .NET | Java / Spring | Notes |
+|---|---|---|
+| EF Core | JPA (Jakarta Persistence API) with Hibernate, usually through Spring Data JPA | Also jOOQ or Spring JDBC (Java Database Connectivity, the low-level SQL API) for SQL-first code |
+| `DbContext` | `EntityManager` (the persistence context) | Both a unit of work with a change tracker |
+| `DbSet<T>` / a repository port | Spring Data `JpaRepository<T, ID>` | A generated generic repository: see §10.4 before exposing it everywhere |
+| Migrations (`dotnet ef migrations add`) | Flyway or Liquibase | Versioned SQL applied at startup or in the pipeline |
+| Projection with `Select(...)` | JPQL (Jakarta Persistence Query Language) constructor expressions, Spring Data interface or record projections | Light CQRS reads (§3.8) |
+| `ExecuteUpdate` (conditional `UPDATE`, 01) | `@Modifying @Query("update …")` | |
+| `xmin` row version (optimistic, 02/03/05) | `@Version` on an entity field | Hibernate adds `WHERE version = ?` and throws `OptimisticLockException` |
+| `SELECT … FOR UPDATE` (04/05) | `@Lock(LockModeType.PESSIMISTIC_WRITE)` on a repository method | |
+| `BeginTransaction` / `SharedTransaction` | `@Transactional` | Spring's declarative transactions; the shared transaction of 04 is simply one `@Transactional` method across modules |
+| Value converter / owned entity | `@Convert` with an `AttributeConverter` / `@Embeddable` | For value objects such as `Money` |
+
+### Tests and architecture rules
+
+| .NET | Java / Spring | Notes |
+|---|---|---|
+| xUnit v3 | JUnit 5 (Jupiter) | |
+| Plain `Assert` | JUnit `Assertions`, or AssertJ | |
+| `WebApplicationFactory` | `@SpringBootTest` with `MockMvc`, `WebTestClient` or `TestRestTemplate` | Starts the real application for API tests |
+| Testcontainers for .NET | Testcontainers for Java (the original), plus Spring Boot's `@ServiceConnection` | |
+| ArchUnitNET | **ArchUnit**, the original Java library | Java compiles lambdas into synthetic methods of the enclosing class and has no async state machines, so the blind spot of §6.6 hardly arises there |
+| Architecture tests on project files (04/05) | Maven Enforcer rules, or ArchUnit rules on packages | |
+| A shared, abstract contract suite | An abstract JUnit test class inherited per version, or Spring Cloud Contract for consumer-driven contracts | |
+
+### Modular monolith and messaging
+
+| .NET (this repo) | Java / Spring | Notes |
+|---|---|---|
+| Modules with `*.Contracts` and `internal` (04) | **Spring Modulith**: each top-level package is a module, its sub-packages are internal, and `ApplicationModules.of(App.class).verify()` fails a test on illegal dependencies | The closest ready-made equivalent of 04's rules |
+| In-process event bus (04) | `ApplicationEventPublisher` and `@EventListener`; `@TransactionalEventListener` to run after the commit | Spring Modulith adds `@ApplicationModuleListener` |
+| Transactional outbox (05, hand-written) | Spring Modulith's event publication registry (events stored in the same transaction, republished if not completed); or Debezium, a **CDC** (change data capture) tool that reads the database's transaction log and publishes each committed change | Spring Modulith can also externalise events to a broker |
+| `RabbitMQ.Client` | Spring AMQP (`RabbitTemplate`, `@RabbitListener`), or Spring Cloud Stream for broker-neutral code | |
+| Inbox (idempotent consumer) | Hand-written as here, or Spring Integration's idempotent receiver | |
+| Saga orchestrator (`OrderSaga`) | Hand-written as here; or a framework such as Axon or Eventuate Tram Sagas | |
+| MediatR (not used here) | No standard equivalent; Spring's own events and plain services usually cover it | |
+
+### Distributed systems
+
+| .NET (05) | Java / Spring | Notes |
+|---|---|---|
+| Aspire AppHost (local orchestration) | Docker Compose with Spring Boot's Compose support, or Testcontainers at development time; Kubernetes for deployment | Aspire has no single Spring equivalent |
+| ServiceDefaults (health, telemetry, resilience) | Spring Boot starters and auto-configuration, Spring Boot Actuator for health | |
+| YARP gateway | Spring Cloud Gateway | |
+| Service discovery | Kubernetes services, or Spring Cloud Netflix Eureka / Consul | |
+| `Microsoft.Extensions.Http.Resilience` (retries, circuit breaker, timeouts) | Resilience4j, Spring Retry | |
+| OpenTelemetry | Micrometer Tracing with an OpenTelemetry bridge, or the OpenTelemetry Java agent | |
+
+### Each version in Spring
+
+| Version | In a Spring codebase it would look like |
+|---|---|
+| 01 Layered | One Maven module with `controller`, `service`, `repository` and `entity` packages, JPA entities returned to controllers. The classic Spring tutorial shape |
+| 02 Clean / Hexagonal | Maven modules `domain` (no Spring dependency), `application` (use cases and port interfaces), `adapters` (web, persistence) and a `bootstrap` module with the `@SpringBootApplication`. ArchUnit's `onionArchitecture()` rule checks it in a few lines; the jMolecules library adds annotations for the roles |
+| 03 Vertical Slice | Package-by-feature: `orders.placeorder` with its controller, handler and request, `orders.getorder` with a JDBC or JPQL projection. Same domain package as 02 |
+| 04 Modular monolith | A Spring Modulith application: packages `catalog`, `ordering`, `payments`, each exposing a small API, talking through application events, verified by `ApplicationModules.verify()` |
+| 05 Microservices | Three Spring Boot applications with their own databases, Spring Cloud Gateway in front, Spring AMQP for RabbitMQ, an outbox (Spring Modulith's registry or hand-written), and Resilience4j around the price lookup |
+
+The front end is a separate question in both ecosystems. An Angular or Vue client follows MVVM in spirit (§11.1) and talks to the same API, whatever the back end is built with.
