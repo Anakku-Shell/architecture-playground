@@ -9,7 +9,7 @@ To place an order, Ordering needs each product's name and current price, and mus
 
 ## Decision
 
-- Ordering calls `GET http://catalog/internal/product-snapshots?ids=…` through its `ICatalogClient` port (`CatalogHttpClient` adapter). The response type `ProductSnapshot` lives in Contracts.
+- Ordering calls `POST http://catalog/internal/product-snapshots` with the ids as a JSON array in the body (a query string would not hold the ids of a large order) through its `ICatalogClient` port (`CatalogHttpClient` adapter). The response type `ProductSnapshot` lives in Contracts.
 - The call has the service defaults' resilience (retries, circuit breaker) and a 5-second overall timeout. Any failure becomes `CatalogUnavailableException` → `503 Service Unavailable`, and nothing is saved.
 - `/internal/*` is not routed by the gateway.
 

@@ -20,7 +20,7 @@ public sealed record StockReserved(Guid OrderId) : IIntegrationMessage;
 public sealed record StockReservationFailed(Guid OrderId) : IIntegrationMessage;
 
 /// <summary>
-/// What Ordering reads from Catalog over HTTP when an order is placed (<c>GET /internal/product-snapshots</c>).
+/// What Ordering reads from Catalog over HTTP when an order is placed (<c>POST /internal/product-snapshots</c>).
 /// A synchronous question with a timeout, because the customer is waiting for the answer (ADR 0006).
 /// </summary>
 public sealed record ProductSnapshot(Guid Id, string Name, decimal Price);

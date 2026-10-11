@@ -26,9 +26,9 @@ internal sealed partial class CreateProductEndpoint : IEndpoint
         var name = errors.Capture("name", () => ProductName.Of(request.Name));
         var sku = errors.Capture("sku", () => Sku.Of(request.Sku));
         var price = errors.Capture("price", () => Product.ValidPrice(request.Price));
+        errors.Check("initialStock", () => Product.EnsureValidInitialStock(request.InitialStock));
         errors.ThrowIfAny();
-        var product = errors.Capture("initialStock", () => Product.Create(Guid.CreateVersion7(), name, sku, price, request.InitialStock));
-        errors.ThrowIfAny();
+        var product = Product.Create(Guid.CreateVersion7(), name, sku, price, request.InitialStock);
 
         // Check first for a friendly message; the unique index catches two requests racing past the check.
         if (await db.Products.AnyAsync(p => p.Sku == sku, ct))

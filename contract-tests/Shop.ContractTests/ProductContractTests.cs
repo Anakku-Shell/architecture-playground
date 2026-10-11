@@ -62,6 +62,15 @@ public abstract class ProductContractTests(IShopApi api) : ContractTests(api)
     }
 
     [Fact]
+    public async Task CreateProduct_WithEveryFieldInvalid_ReportsEveryField()
+    {
+        // One answer lists every problem, so a client can fix them all at once.
+        var response = await Shop.CreateProductRaw(new { name = "", sku = "", price = 0m, initialStock = -1 });
+
+        await ProblemAssert.IsValidationProblem(response, "name", "sku", "price", "initialStock");
+    }
+
+    [Fact]
     public async Task PriceWithThreeDecimals_Returns400()
     {
         var sku = ShopClient.UniqueSku().ToUpperInvariant();
@@ -167,6 +176,23 @@ public abstract class ProductContractTests(IShopApi api) : ContractTests(api)
         await ProblemAssert.IsProblem(await Shop.AdjustStockRaw(product.Id, 2), HttpStatusCode.Conflict);
 
         Assert.Equal(999_999, (await Shop.GetProduct(product.Id)).Stock);
+    }
+
+    [Fact]
+    public async Task AdjustStock_DownwardsWhileAboveTheMaximum_IsAccepted()
+    {
+        // Releasing stock is never capped (a cancelled order must always give its units back), so stock
+        // can end above the maximum. A correction downwards must still be possible from there.
+        var product = await Shop.CreateProduct(stock: 1_000_000);
+        var placed = await Shop.PlaceOrder((product.Id, 2));
+        await Shop.WaitForSettled(placed.Id);
+        await ShopClient.ReadSuccess<ProductResponse>(await Shop.AdjustStockRaw(product.Id, 2));
+        await ShopClient.ReadSuccess<OrderResponse>(await Shop.CancelRaw(placed.Id));
+        await Shop.WaitForProduct(product.Id, p => p.Stock == 1_000_002);
+
+        var corrected = await ShopClient.ReadSuccess<ProductResponse>(await Shop.AdjustStockRaw(product.Id, -1));
+
+        Assert.Equal(1_000_001, corrected.Stock);
     }
 
     [Theory]

@@ -34,7 +34,7 @@ internal sealed partial class ProcessPaymentConsumer(
 
         // The external call happens before the commit and is not part of it. If the commit then fails, the
         // message is redelivered and the charge asked for again: the order id travels as the provider's
-        // idempotency key, so the provider recognises the repeat and does not charge twice (Guide §8.4).
+        // idempotency key, so the provider recognises the repeat and does not charge twice (Guide §8.6, "The external charge, again").
         var status = await gateway.ChargeAsync(message.OrderId, message.Amount, cancellationToken);
         var payment = new Payment
         {

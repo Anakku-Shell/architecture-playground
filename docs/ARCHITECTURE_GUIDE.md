@@ -12,7 +12,7 @@ This guide goes with the code. It explains software architecture from zero. Ever
    1. [The .NET SDK](#11-the-net-sdk)
    2. [VS Code and the recommended extensions](#12-vs-code-and-the-recommended-extensions)
    3. [Docker Desktop](#13-docker-desktop)
-   4. [.NET Aspire (version 05 only)](#14-net-aspire-version-05-only)
+   4. [Aspire (version 05 only)](#14-aspire-version-05-only)
    5. [Everyday commands](#15-everyday-commands)
    6. [First run on a new machine: where the database comes from](#16-first-run-on-a-new-machine-where-the-database-comes-from)
 2. [Project anatomy](#2-project-anatomy)
@@ -207,7 +207,7 @@ Docker Desktop must be **running** (whale icon in the system tray) before you st
 - a named volume `shop-pgdata`, so data survives restarts;
 - `docker/postgres/init.sql`, which creates one database per version the first time: `shop_layered`, `shop_clean`, `shop_slice`, `shop_modular`.
 
-### 1.4 .NET Aspire (version 05 only)
+### 1.4 Aspire (version 05 only)
 
 **Aspire** (called *.NET Aspire* until version 13, when it dropped the prefix) is Microsoft's toolkit for running and observing **distributed applications** (several processes that talk to each other) on a developer machine. Version 05 has four processes (three services and an **API gateway**, the single entry point that forwards each request to the right service) plus PostgreSQL and RabbitMQ. Without Aspire you would start each one by hand and wire their addresses together.
 
@@ -390,12 +390,12 @@ Some libraries are **deliberately not used**. MediatR, AutoMapper and FluentAsse
 
 ### 2.7 Kinds of tests
 
-Every version has the same three test projects:
+Every version has the same three test projects (05 adds a fourth, `Shop.Micro.IntegrationTests`, §8.4):
 
 | Project | What it tests | Needs Docker? |
 |---|---|---|
 | `Shop.<V>.UnitTests` | Business rules in isolation: an order cannot be paid twice, a price must be positive… Fast, no database | No |
-| `Shop.<V>.ArchitectureTests` | The **rules of the architecture**, written as tests with **ArchUnitNET**: "Domain depends on nothing", "a module only uses another module's Contracts" | No |
+| `Shop.<V>.ArchitectureTests` | The **rules of the architecture**, written as tests (with **ArchUnitNET** in 01–03; by reading project files and compiled code in 04–05, §7.7): "Domain depends on nothing", "a module only uses another module's Contracts" | No |
 | `Shop.<V>.ContractTests` | The **public API**, over HTTP, against the real app and a real database | Yes |
 
 **Architecture tests** deserve a word. ArchUnitNET loads the compiled assemblies and checks rules about their dependencies:
@@ -468,7 +468,7 @@ Architecture discussions get confusing because people compare styles that answer
 
 | Axis | Question it answers | Options | In this repo |
 |---|---|---|---|
-| **A. Code organisation** | How is the code arranged *inside* one deployable application? | N-tier layered · Clean / Hexagonal / Onion · Vertical Slice · simple CRUD / Transaction Script | 01, 02, 03, and mixed in 04–05 |
+| **A. Code organisation** | How is the code arranged *inside* one deployable application? | N-tier layered · Clean / Hexagonal / Onion · Vertical Slice · simple CRUD (Create, Read, Update, Delete) / Transaction Script | 01, 02, 03, and mixed in 04–05 |
 | **B. Domain modelling** | Where are the boundaries of the business, and how rich is the model? | Anemic model · DDD tactical (aggregates, value objects) · DDD strategic (bounded contexts) | 01 anemic, 02+ rich, 04+ bounded contexts |
 | **C. Deployment** | How many processes, and how do they talk? | Monolith · Modular monolith · Microservices (also SOA, serverless) | 01–03 monolith, 04 modular, 05 microservices |
 | **D. Data and command flow** | How do changes and reads move through the system? | Synchronous calls · CQRS · domain/integration events · messaging · sagas · event sourcing | 03 CQRS, 04 in-process events, 05 messaging + saga |
@@ -650,7 +650,7 @@ Three bounded contexts:
 
 A **SKU** (Stock Keeping Unit) is the shop's own product code, like `MUG-001`. It is unique and case-insensitive, and it is stored in upper case.
 
-**Limits.** A price is at most 1,000,000.00 with two decimals at most. Stock goes from 0 to 1,000,000, and one adjustment moves at most 1,000,000 units. An order line asks for 1 to 1000 units. Beyond a limit, invalid input is a `400`, and an adjustment that would push the stock out of range is a `409`. These are business rules, but they also protect the system. Without them, a price of 10¹⁷ passes "positive, two decimals" and then overflows the `numeric(18,2)` column (a `500`), and stock near the largest `int` wraps around to a negative number. Every type and every column has a limit; a good API states it as a rule instead of discovering it as a crash.
+**Limits.** A price is at most 1,000,000.00 with two decimals at most. Creating a product and adding stock never take it above 1,000,000, and one adjustment moves at most 1,000,000 units. Releasing the units of a cancelled order is never refused, so stock can end above the maximum; from there an adjustment downwards is still accepted, and only adding is refused. An order line asks for 1 to 1000 units. Beyond a limit, invalid input is a `400`, and an adjustment that would take the stock below 0, or add stock beyond the maximum, is a `409`. These are business rules, but they also protect the system. Without them, a price of 10¹⁷ passes "positive, two decimals" and then overflows the `numeric(18,2)` column (a `500`), and stock near the largest `int` wraps around to a negative number. Every type and every column has a limit; a good API states it as a rule instead of discovering it as a crash.
 
 **The life of an order** is where the rules are:
 
@@ -972,7 +972,7 @@ Nothing: this is the baseline. Every later version is built from a copy of the p
 3. **Strict versus relaxed layering?**
    Strict: a layer may use only the layer directly below. Relaxed: any lower layer. Many codebases are relaxed in practice through transitive references, for example controllers using JPA entities. Name the rule you want and enforce it with an architecture test.
 4. **Should a controller return JPA/EF entities?**
-   Better not. It turns every column into public API, can leak internal fields, can loop through navigation properties, and couples the API to the schema. Map to response DTOs at the edge.
+   Better not. It turns every column into public API, can leak internal fields, can loop through navigation properties, and couples the API to the schema. Map to response DTOs (Data Transfer Objects: plain records that only carry data) at the edge.
 5. **How do you stop two requests from selling the last unit twice?**
    Let the database decide atomically. Use a conditional `UPDATE … WHERE stock >= @qty` and check the affected row count, or optimistic concurrency with a version column and a retry. Never read-check-write in application code without one of them. For several rows, lock them in a consistent order to avoid deadlocks.
 6. **When would you still choose layered today?**
@@ -1322,7 +1322,7 @@ The code grew by more than half. That is the honest cost, paid in mapping (value
 5. **Where does validation go?**
    In two places, for two purposes. Input validation (is the request well formed? which field is wrong?) belongs at the application boundary. Invariants (an amount has at most two decimals, a paid order cannot be cancelled) belong in the domain and are enforced always, whoever calls.
 6. **Should the domain reference EF Core or JPA?**
-   Ideally not: no attributes, no `DbContext`, no annotations. Mapping lives in infrastructure (fluent configuration, or `orm.xml` in Java). A private constructor for the ORM is the usual small compromise; a separate persistence model is the pure alternative.
+   Ideally not: no attributes, no `DbContext`, no annotations. Mapping lives in infrastructure (fluent configuration, or `orm.xml` in Java). A private constructor for the ORM (object-relational mapper, such as EF Core or Hibernate) is the usual small compromise; a separate persistence model is the pure alternative.
 
 ---
 
@@ -1605,7 +1605,7 @@ Code: [`04-modular-monolith/`](../04-modular-monolith/README.md). Decisions: [AD
 
 ### 7.1 The idea
 
-Versions 01–03 are **one model**. Any class can use any other class and any query can read any table. Nothing stops the payment code from reading product rows or the catalog from changing an order. Over the years that is how a monolith becomes a **big ball of mud** (§3.2). Microservices (chapter 8) fix this with walls made of networks, at a high price. A **modular monolith** gets the walls without paying for the network.
+Versions 01–03 are **one model**. Any class can use any other class and any query can read any table. Nothing stops the payment code from reading product rows or the catalog from changing an order. Over the years that is how a monolith becomes a **big ball of mud** (§4.8). Microservices (chapter 8) fix this with walls made of networks, at a high price. A **modular monolith** gets the walls without paying for the network.
 
 The system is still **one deployable**: one process and one database. Inside, it is split into **modules**, one per **bounded context** (§3.7): Catalog, Ordering and Payments. Each module has:
 
@@ -2139,9 +2139,9 @@ src/
 |---|---|---|---|
 | Client → gateway → Ordering | JSON → `PlaceOrderRequest` | `Ordering.Api/Http` | The public JSON contract, unchanged since 01 |
 | Adapter → use case | `PlaceOrderCommand` | `Ordering.Application` | Free of HTTP |
-| Ordering asks Catalog (HTTP) | `GET /internal/product-snapshots?ids=…` → `ProductSnapshot[]` | `Contracts` | Was `ICatalogQueries` in 04: the same question, now over the network |
+| Ordering asks Catalog (HTTP) | `POST /internal/product-snapshots` with the ids → `ProductSnapshot[]` | `Contracts` | Was `ICatalogQueries` in 04: the same question, now over the network |
 | Use case ↔ domain | `Order`, `OrderLine`, value objects | `Ordering.Domain` | The rules |
-| Ordering → outbox row → broker | `ReserveStock(OrderId, Items)` as JSON in `outbox_messages.Payload`, then an AMQP message | `Contracts`; `Messaging` | Ids and numbers only: the receiver may be written, deployed and versioned separately |
+| Ordering → outbox row → broker | `ReserveStock(OrderId, Items)` as JSON in `outbox_messages.Payload`, then an AMQP (Advanced Message Queuing Protocol, the wire protocol RabbitMQ speaks) message | `Contracts`; `Messaging` | Ids and numbers only: the receiver may be written, deployed and versioned separately |
 | Catalog → broker → Ordering | `StockReserved(OrderId)` / `StockReservationFailed(OrderId)` | `Contracts` | Answers |
 | Use case → adapter → client | `Order` → `OrderResponse` with `status: "Pending"` | `Ordering.Api/Http` | The response describes what is known *now* |
 
@@ -2269,7 +2269,7 @@ Docker Desktop must be running; the root `compose.yaml` database is not used (th
 - **OpenTelemetry**, the vendor-neutral standard for logs, metrics and traces, exported to the dashboard;
 - **health checks**: `/alive` (the process runs) and `/health` (every check passes: the database answers and, through Messaging, the service's queue is being consumed);
 - **service discovery**: `http://catalog` in an `HttpClient` or a YARP destination is resolved to the address the AppHost gave the catalog service;
-- **resilience** on every `HttpClient`: retries with back-off, a per-attempt timeout, a **circuit breaker** (after repeated failures, stop calling for a while and fail fast), from `Microsoft.Extensions.Http.Resilience`. The standard breaker only trips under sustained load (at least 100 calls in 30 seconds, mostly failing): placing a few orders by hand never opens it.
+- **resilience** on every `HttpClient`: retries with back-off, a per-attempt timeout, a **circuit breaker** (after repeated failures, stop calling for a while and fail fast), from `Microsoft.Extensions.Http.Resilience`. The standard breaker only trips under sustained load (at least 100 calls in 30 seconds, of which at least 10% fail): placing a few orders by hand never opens it.
 
 **Reading one order in the dashboard.** Open *Traces* (*Seguimientos* in a Spanish UI). Each row is a **trace**: everything that happened because of one request, across all processes. Each trace is a tree of **spans** (one timed operation: an HTTP call, a query, a publish). The link between processes is the **W3C Trace Context**, a `traceparent` value such as `00-<trace id>-<span id>-01`: ASP.NET Core and `HttpClient` carry it in an HTTP header automatically; Messaging carries it in the outbox row and then in an AMQP header ([`MessagingTracing`](../05-microservices/src/Shop.Micro.Messaging/MessageTypes.cs)). Paying an order whose payment is declined gives one trace with 7 resources:
 
@@ -2293,7 +2293,7 @@ The **RabbitMQ management UI** is linked from the dashboard's *Resources* page (
 
 - **Watch the 202.** Send `POST /api/orders` from [`http/shop.http`](../http/shop.http) with `@baseUrl = {{micro}}`: the response says `Pending`; a `GET` a moment later says `AwaitingPayment`. Pay, and `PaymentPending` comes before `Paid`. Pay twice quickly: the second answers `409`.
 - **Stop Catalog.** In the dashboard's *Resources* page, stop `catalog` and place an order. Ordering's client retries until its 5-second timeout, then Ordering answers `503` (about 5 s in the trial run), and the order was not created. Restart it: everything works again.
-- **Stop Payments, then pay.** The order stays `PaymentPending`; the `ProcessPayment` message waits in the `payments` queue (management UI). Start Payments again: the message is handled and the order becomes `Paid`. Nothing was lost, because the message was in the broker, not in memory. Meanwhile `GET /api/payments` through the gateway answers `504 Gateway Timeout` after 10 seconds: the gateway does not wait forever for a service that does not answer.
+- **Stop Payments, then pay.** The order stays `PaymentPending`; the `ProcessPayment` message waits in the `payments` queue (management UI). Start Payments again: the message is handled and the order becomes `Paid`. Nothing was lost, because the message was in the broker, not in memory. Meanwhile `GET /api/payments` through the gateway answers `504 Gateway Timeout` after 10 seconds: the gateway does not wait forever for a service that does not answer. Like a path no service owns (`404`), that error is produced by the gateway itself, and it still has the ProblemDetails shape of every other error (`AddProblemDetails` and `UseStatusCodePages` in the gateway's `Program.cs`).
 - **Break a rule.** Add a project reference from `Shop.Micro.Payments.Api` to `Shop.Micro.Catalog.Api`: `Services_DoNotReferenceEachOther` and `Services_ShareOnlyContractsMessagingAndServiceDefaults` both fail and name it.
 - **Remove the lock, and see nothing break.** Delete `FOR UPDATE` from [`ReserveStockConsumer`](../05-microservices/src/Shop.Micro.Catalog.Api/Stock/StockConsumers.cs): `ConcurrentOrdersForLastUnits_NeverOversell` still passes. One Catalog instance handles its queue one message at a time, so the queue itself serialises the reservations. The lock is for the day there are two instances (or an HTTP stock adjustment arriving at the same moment): compare 04, where removing it made the test fail at once (§7.5). A test passing does not prove a mechanism is unnecessary.
 
@@ -2335,7 +2335,7 @@ A **saga** (§3.10) replaces one database transaction with a sequence of **local
 
 There are two ways to coordinate one:
 
-- **Choreography**: each service reacts to the others' events and publishes its own; nobody holds the whole picture. Version 04's in-process events were choreography (`OrderPlaced` → Catalog reacted → `StockReserved`).
+- **Choreography**: each service reacts to the others' events and publishes its own; nobody holds the whole picture. Version 04's in-process events were choreography in form (`OrderPlaced` → Catalog reacted → `StockReserved`): the publisher owns the event and does not know who listens. In behaviour they were closer to request and reply, because Ordering's use cases publish, wait for the answer and fail if none came, and `PaymentRequested` is really a command named like an event (§7.5). Moving to a broker made that hidden orchestration explicit.
 - **Orchestration**: one component, the **orchestrator**, tells each participant what to do (**commands**) and decides the next step from their replies (**events**). Version 05 uses orchestration, with Ordering as the orchestrator (ADR 0003): the flow is short, it has one natural owner (the order), and its whole logic is then in one readable class, [`OrderSaga`](../05-microservices/src/Shop.Micro.Ordering.Application/Sagas/OrderSaga.cs).
 
 That choice shows in the messages ([`Contracts`](../05-microservices/src/Shop.Micro.Contracts/CatalogContracts.cs)). 04's events became commands with imperative names, owned by the service that **receives** them, because a command is part of the receiver's API:
@@ -2422,7 +2422,7 @@ sequenceDiagram
 
 **Processing (inside Ordering, one local transaction)**
 
-3. [`PlaceOrder`](../05-microservices/src/Shop.Micro.Ordering.Application/UseCases/PlaceOrder.cs) validates the input, then asks Catalog for names and prices through the `ICatalogClient` port. The adapter, [`CatalogHttpClient`](../05-microservices/src/Shop.Micro.Ordering.Infrastructure/Catalog/CatalogHttpClient.cs), calls `GET http://catalog/internal/product-snapshots?ids=…` with retries, a circuit breaker and a 5-second overall timeout. This is the one **synchronous** call between services (ADR 0006): the customer is waiting, and the order cannot be priced without it. Unknown ids → `400`, as before.
+3. [`PlaceOrder`](../05-microservices/src/Shop.Micro.Ordering.Application/UseCases/PlaceOrder.cs) validates the input, then asks Catalog for names and prices through the `ICatalogClient` port. The adapter, [`CatalogHttpClient`](../05-microservices/src/Shop.Micro.Ordering.Infrastructure/Catalog/CatalogHttpClient.cs), calls `POST http://catalog/internal/product-snapshots` with retries, a circuit breaker and a 5-second overall timeout. The ids go in the body, not in the query string: an order with a few hundred products would pass the 8 KB request line the server accepts. It is a `POST` that changes nothing, so retrying it is still safe. This is the one **synchronous** call between services (ADR 0006): the customer is waiting, and the order cannot be priced without it. Unknown ids → `400`, as before.
    *Boundary Ordering → Catalog: the call crosses the network; the only shared type is `ProductSnapshot` in Contracts. Dependency: Application → port; Infrastructure → Application.*
 4. `Order.Place` creates the order in `Pending`. `orders.Add(order)` and `messages.Send(new ReserveStock(…))` only stage changes (the second through the [`OutboxOutgoingMessages`](../05-microservices/src/Shop.Micro.Ordering.Infrastructure/Persistence/Adapters.cs) adapter into Messaging's outbox). `unitOfWork.SaveChangesAsync` writes **the order, its lines and the outbox row in one transaction**. That transaction is the only one this request has.
    *Boundary Application → Messaging: through Ordering's own port `IOutgoingMessages`; the Application does not know there is an outbox.*
@@ -2492,10 +2492,11 @@ Three local transactions in two databases, four message hops counting the publis
 
 Every rule was broken on purpose and seen to fail, except `OrderingApplication_DoesNotReferenceInfrastructure`: adding that reference creates a project cycle, and the build refuses it before any test runs (`MSB4006`). The rule stays, as documentation and for the day the reference arrives by another path. What the tests cannot see, review must: that no service connects to another service's **database** (the AppHost gives each service only its own connection string; that is a convention, not security, since the same server account could open the other databases: production would give each service its own database user), and that the messages keep their shape across deployments (contract tests per message, or a schema registry, are the usual answers; this playground relies on the end-to-end contract suite).
 
-Besides the shared contract suite (54 tests, through the gateway), 05 has tests of its own:
+Besides the shared contract suite (56 tests, through the gateway), 05 has tests of its own:
 
 - **Integration tests** of the messaging building block, against real PostgreSQL and RabbitMQ containers: `InboxTests.DuplicateMessage_IsHandledOnce`, `InboxTests.FailedMessage_IsRetriedThenDeadLettered`, `OutboxTests.MessageIsPublishedOnlyAfterCommit`, `OutboxTests.RolledBackMessage_IsNeverPublished`, `OutboxTests.UnroutableMessage_DoesNotBlockTheOthers`.
-- **Duplicate tests on the running system** ([`DuplicateMessageTests`](../05-microservices/tests/Shop.Micro.ContractTests/DuplicateMessageTests.cs)), which reach past the gateway to the broker and the databases. `RedeliveredReserveStock_ReservesOnce` sends Ordering's own `ReserveStock` again with the same id: the stock is taken once. `SecondProcessPaymentForAnOrder_ChargesOnce_AndAnswersWithTheSamePayment` sends a new `ProcessPayment` for a paid order: one payment row, the same outcome sent again. `InternalEndpoints_AreNotReachableThroughTheGateway` checks that `/internal/…` answers `404` through the gateway. Seen failing on purpose: without the inbox, the stock ended at 1 instead of 3; without Payments' "already has a payment" check, the second message was never handled (the unique index refused it on every attempt, and it went to the dead-letter queue). Switching off only the inbox's lookup changed nothing, because the inbox's primary key still stopped the second copy at commit: the lookup is an optimisation, the key is the guarantee.
+- **Duplicate tests on the running system** ([`DuplicateMessageTests`](../05-microservices/tests/Shop.Micro.ContractTests/DuplicateMessageTests.cs)), which reach past the gateway to the broker and the databases. `RedeliveredReserveStock_ReservesOnce` sends Ordering's own `ReserveStock` again with the same id: the stock is taken once. `SecondProcessPaymentForAnOrder_ChargesOnce_AndAnswersWithTheSamePayment` sends a new `ProcessPayment` for a paid order: one payment row, the same outcome sent again. Seen failing on purpose: without the inbox, the stock ended at 1 instead of 3; without Payments' "already has a payment" check, the second message was never handled (the unique index refused it on every attempt, and it went to the dead-letter queue). Switching off only the inbox's lookup changed nothing, because the inbox's primary key still stopped the second copy at commit: the lookup is an optimisation, the key is the guarantee.
+- **Gateway tests** ([`GatewayTests`](../05-microservices/tests/Shop.Micro.ContractTests/GatewayTests.cs)): `InternalEndpoints_AreNotReachableThroughTheGateway` checks that `/internal/…` answers a ProblemDetails `404` through the gateway, `UnknownRoute_Returns404Problem` that the gateway's own errors have the API's error shape, and `PlaceOrder_WithManyDistinctProducts_IsAccepted` places an order of 250 products, whose ids would not fit in the query string of the price lookup.
 - **Saga unit tests** cover every transition with fakes. Removing the compensation from the saga makes `PaymentDeclined_CancelsTheOrder_AndCompensatesByReleasingTheStock` fail.
 
 ### 8.8 What changed from version 04
@@ -2512,8 +2513,8 @@ Besides the shared contract suite (54 tests, through the gateway), 05 has tests 
 | Stock concurrency | `FOR UPDATE` (the test fails without it) | `FOR UPDATE` too (one consumer per instance makes the test pass even without it, §8.3) |
 | Shared code | BuildingBlocks: events, bus, errors, transaction | Contracts, Messaging, ServiceDefaults; **errors duplicated per service** |
 | New infrastructure code | Bus (≈ 10 lines), shared transaction | Outbox, dispatcher, inbox, consumer host, topology, tracing (≈ 750 lines of Messaging) |
-| Tests | 81 unit, 12 architecture, 56 contract (54 shared + 2 of its own) | 99 unit, 11 architecture, 57 contract (54 shared + 3 of its own), **5 integration** |
-| C# lines in `src/` (no migrations) | about 1,890 | about 2,770 in 47 files (Ordering 1,040, Messaging 750, Catalog 440, Payments 270, ServiceDefaults 130, Contracts 50, Gateway 50, AppHost 40) |
+| Tests | 81 unit, 12 architecture, 58 contract (56 shared + 2 of its own) | 99 unit, 11 architecture, 61 contract (56 shared + 5 of its own), **5 integration** |
+| C# lines in `src/` (no migrations) | about 1,890 | about 2,780 in 47 files (Ordering 1,040, Messaging 750, Catalog 440, Payments 270, ServiceDefaults 130, Contracts 50, Gateway 50, AppHost 40) |
 
 What moved where:
 
@@ -2810,12 +2811,12 @@ Measured on this repo. The lines of code come from `git ls-files '<folder>/*.cs'
 | **Rules enforced by** | Project references + tests | References + `internal` + tests | Tests only | References + `internal` + tests, per module | References + tests; separate processes and databases |
 | **Rule tests read** | ArchUnitNET + IL | ArchUnitNET + IL | ArchUnitNET + IL | Project files, references, IL (Mono.Cecil) | Project files, references, IL (Mono.Cecil) |
 | **Unit tests** (no database) | 12 | 75 | 62 | 81 | 99 |
-| **Other tests** | 54 contract | 54 contract | 54 contract | 56 contract | 57 contract + 5 integration |
+| **Other tests** | 56 contract | 56 contract | 56 contract | 58 contract | 61 contract + 5 integration |
 | **Test setup** | `WebApplicationFactory` + PostgreSQL in Testcontainers | Same | Same | Same | Aspire testing host (all services, PostgreSQL, RabbitMQ in containers) + Testcontainers for messaging |
-| **C# lines, `src/` without migrations** | 1,014 (24 files) | 1,604 (29) | 1,498 (33) | 1,890 (40) | 2,767 (47) |
+| **C# lines, `src/` without migrations** | 1,016 (24 files) | 1,614 (29) | 1,508 (33) | 1,891 (40) | 2,776 (47) |
 | **C# lines, migrations** | 675 | 667 | 467 | 620 | 1,077 |
-| **C# lines, `tests/`** | 351 | 1,123 | 770 | 1,360 | 1,666 |
-| **C# lines, all** | 2,040 | 3,394 | 2,735 | 3,870 | 5,510 |
+| **C# lines, `tests/`** | 351 | 1,123 | 770 | 1,360 | 1,712 |
+| **C# lines, all** | 2,042 | 3,404 | 2,745 | 3,871 | 5,565 |
 | **ADRs** | 2 | 3 | 3 | 4 | 6 |
 | **Stock concurrency** | Conditional `UPDATE` | Optimistic + retry | Optimistic + retry | `SELECT … FOR UPDATE` | `SELECT … FOR UPDATE` in Catalog |
 | **Easy** | Reading top-down; adding a CRUD field; onboarding | Changing a rule (Domain only); swapping infrastructure; unit-testing rules | Adding or changing one use case (one file); optimising one query | Giving each area its own style and owner; keeping boundaries as it grows; extracting a module later | Deploying, scaling and failing one service alone; team autonomy |
@@ -2835,7 +2836,7 @@ Three things to notice:
 
 **Splitting by technical layer instead of by business capability.** A "database service", a "validation service", a "persistence service" that every request passes through: every feature change touches every service. Services, like modules, should follow bounded contexts (§3.7), so that most changes stay inside one.
 
-**Entity services.** The variant of the previous mistake at the domain level: one deployed service per table (a Product service, an Order service, an OrderLine service) with CRUD endpoints. This is about deployables, not about the service classes of a layered application such as 01, and the real business process spread over callers. Each service is cohesive around data, but the behaviour is everywhere.
+**Entity services.** The variant of the previous mistake at the domain level: one deployed service per table (a Product service, an Order service, an OrderLine service) with CRUD endpoints. This is about deployables, not about the service classes of a layered application such as 01. The real business process ends up spread over the callers: each service is cohesive around data, but the behaviour is everywhere.
 
 **Layers without a reason.** An `IOrderService` with one implementation that calls an `IOrderRepository` with one implementation that calls the `DbContext`, and no decision made anywhere (the "lasagna" of §4.8). A layer or an interface earns its place when it isolates something likely to change or needs to be replaced in tests. Otherwise it is ceremony.
 
@@ -3201,9 +3202,10 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Anemic domain model**: domain classes with data but no behaviour; the rules live in service classes. [§3.7]
 - **API gateway**: the single entry point of a distributed system; it forwards each request to the service that owns it and adds cross-cutting concerns such as timeouts (YARP in 05). [§1.4, §8.6]
 - **AppHost**: the Aspire project that describes a distributed application in C# (containers, databases, services, references, start order) and runs it for development. Not deployed. [§8.3]
-- **Architecture test**: an automated test that checks the dependency rules of an architecture (ArchUnitNET here). [§2.7]
+- **Architecture test**: an automated test that checks the dependency rules of an architecture (ArchUnitNET in 01–03; project files, references and IL in 04–05). [§2.7]
 - **ArchUnit**: the original Java library for architecture rules as tests; ArchUnitNET is its .NET port. [Appendix]
 - **ArchUnitNET**: a .NET library to write architecture rules as tests. [§2.7]
+- **AMQP (Advanced Message Queuing Protocol)**: the open wire protocol between applications and a message broker such as RabbitMQ: exchanges, queues, bindings, acknowledgements. [§8.4]
 - **Aspire**: Microsoft's toolkit (formerly ".NET Aspire") to run, wire and observe a distributed application locally. The AppHost describes the system; the dashboard shows logs, traces and metrics of every process. [§1.4, §8.3]
 - **Assembly**: the compiled output of a project (`.dll` / `.exe`). [§2.2]
 - **Assembly fixture**: an xUnit v3 object created once for all the tests in an assembly. [§2.8]

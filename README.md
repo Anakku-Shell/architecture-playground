@@ -25,7 +25,7 @@ Everything is explained in **[docs/ARCHITECTURE_GUIDE.md](docs/ARCHITECTURE_GUID
 |---|---|---|---|---|---|
 | Projects in `src/` | 3 | 4 | 1 | 11 | 11 |
 | Deployables | 1 | 1 | 1 | 1 | 4 |
-| C# lines in `src/` (without migrations) | 1,014 | 1,604 | 1,498 | 1,890 | 2,767 |
+| C# lines in `src/` (without migrations) | 1,016 | 1,614 | 1,508 | 1,891 | 2,776 |
 | Architecture rules (tests) | 5 | 8 | 6 | 12 | 11 |
 | `POST /api/orders` answers | `201` | `201` | `201` | `201` | `202`, then the saga |
 
@@ -39,7 +39,7 @@ The full comparison, with what each version makes easy and hard, is in [guide §
 | Docker Desktop | any recent | [docker.com](https://www.docker.com/products/docker-desktop/) | Runs PostgreSQL (and RabbitMQ in 05), and the containers used by the tests |
 | VS Code | any recent | `winget install Microsoft.VisualStudioCode` | Open the repo and accept the recommended extensions (`.vscode/extensions.json`). Visual Studio or Rider work too. |
 
-Version 05 uses **.NET Aspire**, which arrives as NuGet packages: nothing else to install. The guide (chapter 1) explains each tool and the optional Aspire CLI.
+Version 05 uses **Aspire** (formerly .NET Aspire), which arrives as NuGet packages: nothing else to install. The guide (chapter 1) explains each tool and the optional Aspire CLI.
 
 ## Quick start
 

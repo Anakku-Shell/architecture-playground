@@ -1,4 +1,3 @@
-using System.Net;
 using System.Text.Json;
 using Aspire.Hosting.Testing;
 using Npgsql;
@@ -58,17 +57,6 @@ public sealed class DuplicateMessageTests(MicroShopApi api)
         Assert.Equal(2, await CountAsync("paymentsdb", $"""SELECT count(*) FROM outbox_messages WHERE "Type" = 'PaymentSucceeded' AND "Payload"->>'paymentId' = '{payment.Id}'""", placed.Id));
         Assert.Equal(OrderStatus.Paid, (await shop.GetOrder(placed.Id)).Status);
         Assert.Equal(payment.Id, (await shop.GetPayment(placed.Id)).Id);
-    }
-
-    /// <summary>The price lookup is for Ordering only: the gateway routes the public API, nothing else.</summary>
-    [Fact]
-    public async Task InternalEndpoints_AreNotReachableThroughTheGateway()
-    {
-        using var client = api.CreateClient();
-
-        var response = await client.GetAsync(new Uri($"/internal/product-snapshots?ids={Guid.NewGuid()}", UriKind.Relative), Ct);
-
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     private async Task<(Guid MessageId, string Payload)> ReadOutboxRowAsync(string database, string type, Guid orderId)

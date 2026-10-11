@@ -9,6 +9,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 
+// Errors the gateway produces itself (a path no service owns, YARP's 502 and 504) get the same
+// ProblemDetails body as every other error of the API, instead of an empty response.
+builder.Services.AddProblemDetails();
+
 (string Service, string PathPrefix)[] routes =
 [
     ("catalog", "/api/products"),
@@ -40,6 +44,8 @@ builder.Services.AddReverseProxy()
     .AddServiceDiscoveryDestinationResolver();
 
 var app = builder.Build();
+
+app.UseStatusCodePages();
 
 app.MapDefaultEndpoints();
 app.MapReverseProxy();

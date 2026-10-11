@@ -53,9 +53,17 @@ public sealed class Product
         ArgumentNullException.ThrowIfNull(name);
         ArgumentNullException.ThrowIfNull(sku);
         EnsureValidPrice(price);
-        return initialStock is < 0 or > MaxStock
-            ? throw new DomainValidationException($"Initial stock must be between 0 and {MaxStock}.")
-            : new Product(id, name, sku, price, initialStock);
+        EnsureValidInitialStock(initialStock);
+        return new Product(id, name, sku, price, initialStock);
+    }
+
+    /// <summary>Checks the stock a new product starts with on its own: 0 to <see cref="MaxStock"/>.</summary>
+    public static void EnsureValidInitialStock(int initialStock)
+    {
+        if (initialStock is < 0 or > MaxStock)
+        {
+            throw new DomainValidationException($"Initial stock must be between 0 and {MaxStock}.");
+        }
     }
 
     /// <summary>A price for a product: a valid <see cref="Money"/> that is not above <see cref="MaxPrice"/>.</summary>
@@ -76,7 +84,9 @@ public sealed class Product
     public void AdjustStock(int quantity)
     {
         EnsureValidAdjustment(quantity);
-        if (Stock + quantity is < 0 or > MaxStock)
+        // The maximum binds only when adding: releasing stock is never capped, so stock can be above it
+        // and a correction downwards must still be possible. Guide: §3.11.
+        if (Stock + quantity < 0 || (quantity > 0 && Stock + quantity > MaxStock))
         {
             throw new BusinessRuleViolationException($"Stock of product {Id} must stay between 0 and {MaxStock}.");
         }

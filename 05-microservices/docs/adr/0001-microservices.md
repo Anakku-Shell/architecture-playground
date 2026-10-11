@@ -13,7 +13,7 @@ Version 04 has three modules with enforced boundaries in one process and one dat
 - An **API gateway** keeps the public API identical to 01–04 (ADR 0005).
 - Services share only three projects: `Contracts` (messages), `Messaging` (outbox/inbox plumbing) and `ServiceDefaults` (hosting defaults). Business code and even error types are duplicated per service rather than shared.
 - Communication is **asynchronous by default** (RabbitMQ, ADR 0004), coordinated by an orchestrated saga (ADR 0003), with one synchronous exception (ADR 0006).
-- **.NET Aspire** runs the system for development and tests (AppHost, ServiceDefaults, `Aspire.Hosting.Testing`). The Aspire CLI is optional (`ASPIRE010` suppressed: DCP and the dashboard come from NuGet).
+- **Aspire** (formerly .NET Aspire) runs the system for development and tests (AppHost, ServiceDefaults, `Aspire.Hosting.Testing`). The Aspire CLI is optional (`ASPIRE010` suppressed: DCP and the dashboard come from NuGet).
 - The architecture tests (`ServiceRulesTests`) forbid references between services and allow only the three shared projects.
 
 ## Consequences

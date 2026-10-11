@@ -5,7 +5,7 @@
 
 ## Context
 
-Placing and paying an order involve three services and three databases. No transaction can cover them, and a declined payment must undo a stock reservation that another service has already committed. Version 04 coordinated the modules by choreography: each reacted to the others' events inside one transaction.
+Placing and paying an order involve three services and three databases. No transaction can cover them, and a declined payment must undo a stock reservation that another service has already committed. Version 04 coordinated the modules by in-process events inside one transaction: choreography in form (each module reacted to the others' events), request and reply in behaviour (Ordering's use cases waited for the answer to each event they published).
 
 ## Decision
 

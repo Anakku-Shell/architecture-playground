@@ -94,7 +94,7 @@ public sealed partial class OrderService(
 
     public async Task<Order> PayAsync(Guid id, CancellationToken cancellationToken)
     {
-        var order = await LoadForUpdateAsync(id, cancellationToken);
+        var order = await LoadTrackedAsync(id, cancellationToken);
         EnsureAwaitingPayment(order, "paid");
 
         // The fake gateway answers in memory. A real one is a network call, and calling it inside a
@@ -125,7 +125,7 @@ public sealed partial class OrderService(
 
     public async Task<Order> CancelAsync(Guid id, CancellationToken cancellationToken)
     {
-        var order = await LoadForUpdateAsync(id, cancellationToken);
+        var order = await LoadTrackedAsync(id, cancellationToken);
         EnsureAwaitingPayment(order, "cancelled");
 
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
@@ -175,7 +175,8 @@ public sealed partial class OrderService(
         return lines!;
     }
 
-    private async Task<Order> LoadForUpdateAsync(Guid id, CancellationToken cancellationToken) =>
+    // Tracked, not locked: the xmin row version catches a concurrent change when the order is saved.
+    private async Task<Order> LoadTrackedAsync(Guid id, CancellationToken cancellationToken) =>
         await db.Orders.Include(o => o.Lines.OrderBy(l => l.LineNumber)).FirstOrDefaultAsync(o => o.Id == id, cancellationToken)
         ?? throw NotFound(id);
 

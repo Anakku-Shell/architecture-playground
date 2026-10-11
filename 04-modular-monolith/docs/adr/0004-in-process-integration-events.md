@@ -11,7 +11,7 @@ Placing, paying and cancelling an order involve two or three modules. In 02 one 
 
 - Modules publish **integration events** declared in their contracts (`OrderPlaced`, `StockReserved`, `StockReservationFailed`, `PaymentRequested`, `PaymentSucceeded`, `PaymentDeclined`, `OrderCancelled`) through `IEventBus`.
 - The bus is **in-process and synchronous** (`InProcessEventBus`): it resolves the consumers registered in the request's services and awaits them in order. Nested publishes complete before `PublishAsync` returns; a consumer's exception reaches the publisher.
-- **One transaction for all modules.** One `DbConnection` per request is shared by every module's DbContext; `SharedTransaction` begins a transaction on it, enlists every DbContext and commits at the end. Ordering starts it, through its `IUnitOfWork` port, for every flow it orchestrates.
+- **One transaction for all modules.** One `DbConnection` per request is shared by every module's DbContext; `SharedTransaction` begins a transaction on it, enlists every DbContext and commits at the end. Ordering starts it, through its `IUnitOfWork` port, for every flow it starts (placing, paying, cancelling an order).
 - **Pessimistic locking instead of optimistic retries.** Catalog locks an order's products (`SELECT … FOR UPDATE`, in id order) before reserving; Ordering locks the order row before paying or cancelling. Retrying a whole multi-module conversation would be costly and would repeat side effects such as charging.
 - Ordering's use cases fail loudly if nobody answers their question (`Pending` or `AwaitingPayment` left after publishing), and Catalog refuses to reserve outside a transaction.
 

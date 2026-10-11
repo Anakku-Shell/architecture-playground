@@ -93,8 +93,9 @@ internal static partial class ProductEndpoints
         // One conditional UPDATE, as in version 01: the database checks the range and changes the stock in
         // one atomic step, so a concurrent order cannot slip in between.
         var quantity = request.Quantity;
+        // The maximum binds only when adding (Guide: §3.11): a release can leave stock above it.
         var updated = await db.Products
-            .Where(p => p.Id == id && p.Stock + quantity >= 0 && p.Stock + quantity <= ProductRules.MaxStock)
+            .Where(p => p.Id == id && p.Stock + quantity >= 0 && (quantity < 0 || p.Stock + quantity <= ProductRules.MaxStock))
             .ExecuteUpdateAsync(set => set.SetProperty(p => p.Stock, p => p.Stock + quantity), ct);
         if (updated == 0)
         {

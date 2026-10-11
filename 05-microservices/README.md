@@ -61,7 +61,7 @@ sequenceDiagram
     end
     C->>G: POST /api/orders
     G->>O: forward
-    O->>CE: GET /internal/product-snapshots (HTTP)
+    O->>CE: POST /internal/product-snapshots (HTTP)
     O->>O: save order (Pending) + outbox ReserveStock, one commit
     O-->>C: 202 Accepted, Pending
     O->>MQ: dispatcher publishes ReserveStock
@@ -77,3 +77,12 @@ Step by step, paying and the compensation: [guide §8.6](../docs/ARCHITECTURE_GU
 - **Good:** independent deployment and scaling per service, failure isolation where communication is asynchronous, hard data boundaries, observability from day one.
 - **Costs:** a broker, outbox, inbox, dispatcher, dead letters, gateway and tracing (about 750 lines of messaging alone); eventual consistency and `202` responses; harder testing and operations; the synchronous price lookup still couples order placement to Catalog's availability.
 - **Use it for** several teams that must deliver independently, or parts with very different scaling or availability needs, extracted one at a time from a modular monolith. **Avoid it** for a new product with moving boundaries, one small team, or data that needs strong consistency across services.
+
+## Decisions
+
+- [0001 — Split the modular monolith into microservices](docs/adr/0001-microservices.md)
+- [0002 — One database per service](docs/adr/0002-database-per-service.md)
+- [0003 — An orchestrated saga, owned by Ordering](docs/adr/0003-orchestrated-saga.md)
+- [0004 — Hand-written transactional outbox and idempotent inbox on RabbitMQ](docs/adr/0004-outbox-and-inbox.md)
+- [0005 — An API gateway with YARP](docs/adr/0005-api-gateway.md)
+- [0006 — A synchronous HTTP price lookup from Ordering to Catalog](docs/adr/0006-sync-price-lookup.md)

@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net.Http.Json;
 using Shop.Micro.Contracts.Catalog;
 using Shop.Micro.Ordering.Application.Common;
@@ -21,11 +20,12 @@ internal sealed class CatalogHttpClient(HttpClient http) : ICatalogClient
     public async Task<IReadOnlyList<ProductSnapshot>> GetProductsAsync(IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(ids);
-        var query = string.Join('&', ids.Select(id => string.Create(CultureInfo.InvariantCulture, $"ids={id}")));
         try
         {
-            return await http.GetFromJsonAsync<List<ProductSnapshot>>(new Uri($"/internal/product-snapshots?{query}", UriKind.Relative), cancellationToken)
-                ?? [];
+            // In the body, not the query string: hundreds of ids would not fit in a request line.
+            using var response = await http.PostAsJsonAsync(new Uri("/internal/product-snapshots", UriKind.Relative), ids, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadFromJsonAsync<List<ProductSnapshot>>(cancellationToken) ?? [];
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {

@@ -93,8 +93,9 @@ public sealed partial class ProductService(ShopDbContext db, ILogger<ProductServ
 
         // One conditional UPDATE instead of read-check-write: the database applies the check and the
         // change atomically, so a concurrent order cannot slip in between. Guide: §4.5, step 7.
+        // The maximum binds only when adding (Guide: §3.11): a release can leave stock above it.
         var updated = await db.Products
-            .Where(p => p.Id == id && p.Stock + quantity >= 0 && p.Stock + quantity <= CatalogLimits.MaxStock)
+            .Where(p => p.Id == id && p.Stock + quantity >= 0 && (quantity < 0 || p.Stock + quantity <= CatalogLimits.MaxStock))
             .ExecuteUpdateAsync(set => set.SetProperty(p => p.Stock, p => p.Stock + quantity), cancellationToken);
         if (updated == 0)
         {

@@ -17,7 +17,7 @@ public sealed class GetOrder(IOrderRepository orders)
 /// <summary>
 /// Asks Payments to charge an order and returns the outcome. The order row is locked first, so two pays (or a
 /// pay and a cancel) of the same order run one after the other: the second sees the first's result and is
-/// refused before any money is requested. Versions 02 and 03 could not close that race (Guide §5.5). The charge itself stays outside the transaction (Guide §7.5).
+/// refused before any money is requested. Versions 02 and 03 could not close that race (Guide §5.5). The charge runs inside the open transaction but is not undone by its rollback (Guide §7.5).
 /// </summary>
 public sealed partial class PayOrder(IOrderRepository orders, IUnitOfWork unitOfWork, IEventBus bus, ILogger<PayOrder> logger)
 {

@@ -21,9 +21,9 @@ public sealed partial class CreateProduct(IProductRepository products, IUnitOfWo
         var name = errors.Capture("name", () => ProductName.Of(command.Name));
         var sku = errors.Capture("sku", () => Sku.Of(command.Sku));
         var price = errors.Capture("price", () => Product.ValidPrice(command.Price));
+        errors.Check("initialStock", () => Product.EnsureValidInitialStock(command.InitialStock));
         errors.ThrowIfAny();
-        var product = errors.Capture("initialStock", () => Product.Create(Guid.CreateVersion7(), name, sku, price, command.InitialStock));
-        errors.ThrowIfAny();
+        var product = Product.Create(Guid.CreateVersion7(), name, sku, price, command.InitialStock);
 
         // Check first for a friendly message; the unique index behind the port catches the race.
         if (await products.SkuExistsAsync(sku, cancellationToken))
