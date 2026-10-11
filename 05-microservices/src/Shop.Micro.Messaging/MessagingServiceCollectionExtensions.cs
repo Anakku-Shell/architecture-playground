@@ -86,6 +86,12 @@ internal static partial class MessagingLog
     [LoggerMessage(Level = LogLevel.Warning, Message = "Could not schedule the retry of {Type} {MessageId}; it goes back to the queue")]
     public static partial void RetryFailed(ILogger logger, Exception exception, string type, Guid messageId);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Lost the consumer of queue {Queue}; starting it again")]
+    public static partial void ConsumerLost(ILogger logger, string queue);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not start consuming queue {Queue}; trying again")]
+    public static partial void ConsumerStartFailed(ILogger logger, Exception exception, string queue);
+
     [LoggerMessage(Level = LogLevel.Error, Message = "Rejected an unreadable message (type {Type}, id {MessageId}) to the dead-letter queue")]
     public static partial void Unreadable(ILogger logger, string? type, string? messageId);
 }

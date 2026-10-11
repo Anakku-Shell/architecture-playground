@@ -14,7 +14,9 @@ namespace Shop.Micro.Messaging;
 /// records the message id, runs the consumer (its writes and the messages it sends) and commits; only then is
 /// the delivery acknowledged. A redelivered message finds its id already recorded and is acknowledged without
 /// running again. A failure rolls everything back and the message is tried again; after
-/// <see cref="MessagingOptions.MaxAttempts"/> attempts it goes to the dead-letter queue.
+/// <see cref="MessagingOptions.MaxAttempts"/> attempts it goes to the dead-letter queue. If the consumer is lost
+/// while the process runs (the broker closes the channel or cancels the consumer, for example because the queue
+/// was deleted), the health check reports it and the host starts again on a new channel.
 /// Guide: §8.4, "The idempotent inbox".
 /// </summary>
 internal sealed class RabbitMqConsumerHost<TContext>(
@@ -29,31 +31,83 @@ internal sealed class RabbitMqConsumerHost<TContext>(
 {
     private const ushort Prefetch = 10;
     private const string AttemptHeader = "x-attempt";
+    private static readonly TimeSpan RestartDelay = TimeSpan.FromSeconds(1);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
+                await ConsumeUntilLostAsync(stoppingToken);
+                MessagingLog.ConsumerLost(logger, options.QueueName);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // Shutting down. Unacknowledged deliveries go back to the queue when the channel closes.
+                return;
+            }
+            catch (Exception ex)
+            {
+                // The broker could not be reached, or refused the setup: try again in a moment.
+                MessagingLog.ConsumerStartFailed(logger, ex, options.QueueName);
+            }
+
+            try
+            {
+                await Task.Delay(RestartDelay, time, stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Declares the queue and consumes it on a new channel, until the broker takes the consumer away. A lost
+    /// connection is not a loss here: the client recovers it, with this channel and its consumer.
+    /// </summary>
+    private async Task ConsumeUntilLostAsync(CancellationToken stoppingToken)
+    {
+        var lost = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
         // Publisher confirms, for the retry copies this channel publishes (see RetryOrDeadLetterAsync).
         var channel = await connection.CreateChannelAsync(
             new CreateChannelOptions(publisherConfirmationsEnabled: true, publisherConfirmationTrackingEnabled: true), stoppingToken);
         try
         {
+            // The broker closed this channel on its own (a protocol error), while the connection stays up.
+            channel.ChannelShutdownAsync += (_, args) =>
+            {
+                if (args.Initiator != ShutdownInitiator.Application && connection.IsOpen)
+                {
+                    lost.TrySetResult();
+                }
+
+                return Task.CompletedTask;
+            };
             await Topology.DeclareQueueAsync(channel, options, registry.Names, stoppingToken);
             await channel.BasicQosAsync(prefetchSize: 0, prefetchCount: Prefetch, global: false, stoppingToken);
 
             // Deliveries on one channel are handled one at a time, in order (the client's default).
             var consumer = new AsyncEventingBasicConsumer(channel);
             consumer.ReceivedAsync += (_, delivery) => HandleAsync(channel, delivery, stoppingToken);
-            await channel.BasicConsumeAsync(options.QueueName, autoAck: false, consumer, stoppingToken);
-            readiness.MarkReady();
 
-            await Task.Delay(Timeout.Infinite, stoppingToken);
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            // Shutting down. Unacknowledged deliveries go back to the queue when the channel closes.
+            // The broker cancelled the consumer (its queue was deleted, or its node went away).
+            consumer.UnregisteredAsync += (_, _) =>
+            {
+                lost.TrySetResult();
+                return Task.CompletedTask;
+            };
+            await channel.BasicConsumeAsync(options.QueueName, autoAck: false, consumer, stoppingToken);
+            readiness.Consuming(channel);
+
+            await lost.Task.WaitAsync(stoppingToken);
         }
         finally
         {
+            readiness.Stopped();
             await channel.DisposeAsync();
         }
     }
@@ -175,19 +229,25 @@ internal sealed class RabbitMqConsumerHost<TContext>(
     }
 }
 
-/// <summary>Whether the service's queue is declared and being consumed.</summary>
+/// <summary>
+/// Whether the service's queue is declared and being consumed: a consumer is registered and its channel is
+/// open. The channel is closed while a lost connection is being recovered, so that shows up here too.
+/// </summary>
 public sealed class ConsumerReadiness
 {
-    private volatile bool _ready;
+    private volatile IChannel? _channel;
 
-    public bool IsReady => _ready;
+    public bool IsReady => _channel?.IsOpen == true;
 
-    internal void MarkReady() => _ready = true;
+    internal void Consuming(IChannel channel) => _channel = channel;
+
+    internal void Stopped() => _channel = null;
 }
 
 /// <summary>
-/// Reports the service unhealthy until its queue exists. Aspire starts the gateway only once every service
-/// is healthy, so no message is published before the queue that should receive it is there.
+/// Reports the service unhealthy until its queue exists and whenever it is not being consumed. Aspire starts
+/// the gateway only once every service is healthy, so no message is published before the queue that should
+/// receive it is there.
 /// </summary>
 internal sealed class MessagingHealthCheck(ConsumerReadiness readiness) : IHealthCheck
 {

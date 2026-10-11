@@ -25,7 +25,7 @@ Everything is explained in **[docs/ARCHITECTURE_GUIDE.md](docs/ARCHITECTURE_GUID
 |---|---|---|---|---|---|
 | Projects in `src/` | 3 | 4 | 1 | 11 | 11 |
 | Deployables | 1 | 1 | 1 | 1 | 4 |
-| C# lines in `src/` (without migrations) | 1,016 | 1,614 | 1,508 | 1,891 | 2,776 |
+| C# lines in `src/` (without migrations) | 1,016 | 1,614 | 1,508 | 1,891 | 2,842 |
 | Architecture rules (tests) | 5 | 8 | 6 | 12 | 11 |
 | `POST /api/orders` answers | `201` | `201` | `201` | `201` | `202`, then the saga |
 

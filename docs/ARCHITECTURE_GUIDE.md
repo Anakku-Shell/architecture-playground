@@ -2290,7 +2290,7 @@ The **RabbitMQ management UI** is linked from the dashboard's *Resources* page (
 **Try this**
 
 - **Watch the 202.** Send `POST /api/orders` from [`http/shop.http`](../http/shop.http) with `@baseUrl = {{micro}}`: the response says `Pending`; a `GET` a moment later says `AwaitingPayment`. Pay, and `PaymentPending` comes before `Paid`. Pay twice quickly: the second answers `409`.
-- **Stop Catalog.** In the dashboard's *Resources* page, stop `catalog` and place an order. Ordering's client retries until its 5-second timeout, then Ordering answers `503` (about 5 s in the trial run), and the order was not created. Restart it: everything works again.
+- **Stop Catalog.** In the dashboard's *Resources* page, stop `catalog` and place an order. Ordering's client retries until its 5-second timeout, then Ordering answers `503` (about 5 s in the trial run), and the order was not created. Restart it: everything works again. `PartialFailureTests` (§8.7) does the same in a test.
 - **Stop Payments, then pay.** The order stays `PaymentPending`; the `ProcessPayment` message waits in the `payments` queue (management UI). Start Payments again: the message is handled and the order becomes `Paid`. Nothing was lost, because the message was in the broker, not in memory. Meanwhile `GET /api/payments` through the gateway answers `504 Gateway Timeout` after 10 seconds: the gateway does not wait forever for a service that does not answer. Like a path no service owns (`404`), that error is produced by the gateway itself, and it still has the ProblemDetails shape of every other error (`AddProblemDetails` and `UseStatusCodePages` in the gateway's `Program.cs`).
 - **Break a rule.** Add a project reference from `Shop.Micro.Payments.Api` to `Shop.Micro.Catalog.Api`: `Services_DoNotReferenceEachOther` and `Services_ShareOnlyContractsMessagingAndServiceDefaults` both fail and name it.
 - **Remove the lock, and see nothing break.** Delete `FOR UPDATE` from [`ReserveStockConsumer`](../05-microservices/src/Shop.Micro.Catalog.Api/Stock/StockConsumers.cs): `ConcurrentOrdersForLastUnits_NeverOversell` still passes. One Catalog instance handles its queue one message at a time, so the queue itself serialises the reservations. The lock is for the day there are two instances (or an HTTP stock adjustment arriving at the same moment): compare 04, where removing it made the test fail at once (§7.5). A test passing does not prove a mechanism is unnecessary.
@@ -2323,7 +2323,7 @@ The outbox moves the problem; it does not make it vanish. If the dispatcher dies
 
 Two kinds of duplicates need two defences. The inbox catches the *same message* delivered twice. A *second message with the same meaning* (a new id) needs a business-level check: Payments refuses to charge an order that already has a payment, and the saga ignores replies that do not fit the order's state (§8.5).
 
-**Readiness.** A message published to an exchange with no matching queue is refused (`mandatory`), and the dispatcher keeps it and retries. To avoid that at startup, each service reports itself healthy only once its queue is declared and consumed (`MessagingHealthCheck`), and the AppHost starts the gateway only after all three services are healthy.
+**Readiness.** A message published to an exchange with no matching queue is refused (`mandatory`), and the dispatcher keeps it and retries. To avoid that at startup, each service reports itself healthy only once its queue is declared and consumed (`MessagingHealthCheck`), and the AppHost starts the gateway only after all three services are healthy. The check stays honest afterwards: if the broker takes the consumer away while the service runs (it closes the channel, or cancels the consumer because the queue was deleted), the service reports itself unhealthy, and the consumer host declares the queue again and starts consuming on a new channel. A lost *connection* is different: the RabbitMQ client recovers it by itself, with its channels and consumers, and the service is unhealthy only until then.
 
 **What this playground leaves out.** Retries wait inside the consumer, which handles one message at a time, so a failing message delays the rest of its service's queue (about 2 seconds over its 5 attempts); a separate delay queue would avoid that. Sent outbox rows and inbox rows are never deleted (a scheduled job would delete them after a few days); messages are not versioned (adding an optional field is safe, renaming a type is a breaking change because the name is the routing key); there is no replay tooling for dead letters (the management UI can move them by hand). A library such as MassTransit or Wolverine provides all of this; it is hand-written here so the mechanics are visible, and the guide's advice for production is to use one (§8.9).
 
@@ -2492,9 +2492,10 @@ Every rule was broken on purpose and seen to fail, except `OrderingApplication_D
 
 Besides the shared contract suite (56 tests, through the gateway), 05 has tests of its own:
 
-- **Integration tests** of the messaging building block, against real PostgreSQL and RabbitMQ containers: `InboxTests.DuplicateMessage_IsHandledOnce`, `InboxTests.FailedMessage_IsRetriedThenDeadLettered`, `OutboxTests.MessageIsPublishedOnlyAfterCommit`, `OutboxTests.RolledBackMessage_IsNeverPublished`, `OutboxTests.UnroutableMessage_DoesNotBlockTheOthers`.
+- **Integration tests** of the messaging building block, against real PostgreSQL and RabbitMQ containers: `InboxTests.DuplicateMessage_IsHandledOnce`, `InboxTests.FailedMessage_IsRetriedThenDeadLettered`, `OutboxTests.MessageIsPublishedOnlyAfterCommit`, `OutboxTests.RolledBackMessage_IsNeverPublished`, `OutboxTests.UnroutableMessage_DoesNotBlockTheOthers`, and `InboxTests.LostConsumer_IsReportedThenStartedAgain` (the queue is deleted under a running consumer: health goes red, the queue comes back, the next message is handled).
 - **Duplicate tests on the running system** ([`DuplicateMessageTests`](../05-microservices/tests/Shop.Micro.ContractTests/DuplicateMessageTests.cs)), which reach past the gateway to the broker and the databases. `RedeliveredReserveStock_ReservesOnce` sends Ordering's own `ReserveStock` again with the same id: the stock is taken once. `SecondProcessPaymentForAnOrder_ChargesOnce_AndAnswersWithTheSamePayment` sends a new `ProcessPayment` for a paid order: one payment row, the same outcome sent again. Seen failing on purpose: without the inbox, the stock ended at 1 instead of 3; without Payments' "already has a payment" check, the second message was never handled (the unique index refused it on every attempt, and it went to the dead-letter queue). Switching off only the inbox's lookup changed nothing, because the inbox's primary key still stopped the second copy at commit: the lookup is an optimisation, the key is the guarantee.
 - **Gateway tests** ([`GatewayTests`](../05-microservices/tests/Shop.Micro.ContractTests/GatewayTests.cs)): `InternalEndpoints_AreNotReachableThroughTheGateway` checks that `/internal/…` answers a ProblemDetails `404` through the gateway, `UnknownRoute_Returns404Problem` that the gateway's own errors have the API's error shape, and `PlaceOrder_WithManyDistinctProducts_IsAccepted` places an order of 250 products, whose ids would not fit in the query string of the price lookup.
+- **A test that stops a service** ([`PartialFailureTests`](../05-microservices/tests/Shop.Micro.ContractTests/PartialFailureTests.cs)): `PlaceOrder_WhileCatalogIsDown_Returns503_ThenWorksAgain` stops Catalog through Aspire's resource commands, expects the `503`, starts it again and places an order. It runs alone, after every other test, so no other test sees the outage. Seen failing on purpose: without the translation to `CatalogUnavailableException`, the answer was a `500`.
 - **Saga unit tests** cover every transition with fakes. Removing the compensation from the saga makes `PaymentDeclined_CancelsTheOrder_AndCompensatesByReleasingTheStock` fail.
 
 ### 8.8 What changed from version 04
@@ -2510,9 +2511,9 @@ Besides the shared contract suite (56 tests, through the gateway), 05 has tests 
 | Order concurrency | `FOR UPDATE` on the order row | `xmin` row version + `PaymentPending` |
 | Stock concurrency | `FOR UPDATE` (the test fails without it) | `FOR UPDATE` too (one consumer per instance makes the test pass even without it, §8.3) |
 | Shared code | BuildingBlocks: events, bus, errors, transaction | Contracts, Messaging, ServiceDefaults; **errors duplicated per service** |
-| New infrastructure code | Bus (≈ 10 lines), shared transaction | Outbox, dispatcher, inbox, consumer host, topology, tracing (≈ 750 lines of Messaging) |
-| Tests | 81 unit, 12 architecture, 58 contract (56 shared + 2 of its own) | 99 unit, 11 architecture, 61 contract (56 shared + 5 of its own), **5 integration** |
-| C# lines in `src/` (no migrations) | about 1,890 | about 2,780 in 47 files (Ordering 1,040, Messaging 750, Catalog 440, Payments 270, ServiceDefaults 130, Contracts 50, Gateway 50, AppHost 40) |
+| New infrastructure code | Bus (≈ 10 lines), shared transaction | Outbox, dispatcher, inbox, consumer host, topology, tracing (≈ 820 lines of Messaging) |
+| Tests | 81 unit, 12 architecture, 58 contract (56 shared + 2 of its own) | 99 unit, 11 architecture, 62 contract (56 shared + 6 of its own), **6 integration** |
+| C# lines in `src/` (no migrations) | about 1,890 | about 2,840 in 47 files (Ordering 1,040, Messaging 820, Catalog 440, Payments 270, ServiceDefaults 130, Contracts 50, Gateway 50, AppHost 40) |
 
 What moved where:
 
@@ -2533,7 +2534,7 @@ What moved where:
 
 **Costs**
 
-- **Much more machinery**: a broker, an outbox, an inbox, a dispatcher, dead letters, health checks, service discovery, a gateway, tracing. About 750 lines of messaging code here, and that is the minimal version (§8.4 lists what is missing).
+- **Much more machinery**: a broker, an outbox, an inbox, a dispatcher, dead letters, health checks, service discovery, a gateway, tracing. About 820 lines of messaging code here, and that is the minimal version (§8.4 lists what is missing).
 - **Eventual consistency.** Clients see `Pending`, must poll, and the UI must explain states that did not exist before. Stock looks taken during a payment that will fail.
 - **Harder to reason about and to test.** Messages arrive late, twice or out of order; every consumer must be idempotent; the contract suite needs Aspire, containers and polling, and is slower to start and to run.
 - **Operations**: four processes and two pieces of infrastructure to deploy, monitor, secure and upgrade; network calls that can time out; data spread over three databases (no join, no single backup, reports need their own read model).
@@ -2809,12 +2810,12 @@ Measured on this repo. The lines of code come from `git ls-files '<folder>/*.cs'
 | **Rules enforced by** | Project references + tests | References + `internal` + tests | Tests only | References + `internal` + tests, per module | References + tests; separate processes and databases |
 | **Rule tests read** | ArchUnitNET + IL | ArchUnitNET + IL | ArchUnitNET + IL | Project files, references, IL (Mono.Cecil) | Project files, references, IL (Mono.Cecil) |
 | **Unit tests** (no database) | 12 | 75 | 62 | 81 | 99 |
-| **Other tests** | 56 contract | 56 contract | 56 contract | 58 contract | 61 contract + 5 integration |
+| **Other tests** | 56 contract | 56 contract | 56 contract | 58 contract | 62 contract + 6 integration |
 | **Test setup** | `WebApplicationFactory` + PostgreSQL in Testcontainers | Same | Same | Same | Aspire testing host (all services, PostgreSQL, RabbitMQ in containers) + Testcontainers for messaging |
-| **C# lines, `src/` without migrations** | 1,016 (24 files) | 1,614 (29) | 1,508 (33) | 1,891 (40) | 2,776 (47) |
+| **C# lines, `src/` without migrations** | 1,016 (24 files) | 1,614 (29) | 1,508 (33) | 1,891 (40) | 2,842 (47) |
 | **C# lines, migrations** | 675 | 667 | 467 | 620 | 1,077 |
-| **C# lines, `tests/`** | 351 | 1,123 | 770 | 1,360 | 1,712 |
-| **C# lines, all** | 2,042 | 3,404 | 2,745 | 3,871 | 5,565 |
+| **C# lines, `tests/`** | 351 | 1,123 | 770 | 1,360 | 1,794 |
+| **C# lines, all** | 2,042 | 3,404 | 2,745 | 3,871 | 5,713 |
 | **ADRs** | 2 | 3 | 3 | 4 | 6 |
 | **Stock concurrency** | Conditional `UPDATE` | Optimistic + retry | Optimistic + retry | `SELECT … FOR UPDATE` | `SELECT … FOR UPDATE` in Catalog |
 | **Easy** | Reading top-down; adding a CRUD field; onboarding | Changing a rule (Domain only); swapping infrastructure; unit-testing rules | Adding or changing one use case (one file); optimising one query | Giving each area its own style and owner; keeping boundaries as it grows; extracting a module later | Deploying, scaling and failing one service alone; team autonomy |
@@ -2822,7 +2823,7 @@ Measured on this repo. The lines of code come from `git ls-files '<folder>/*.cs'
 
 Three things to notice:
 
-- **Code size follows the number of boundaries, not the number of features.** All five do the same thing. 03 is shorter than 02 because it dropped ports; 05 is the longest because messaging alone is about 750 lines.
+- **Code size follows the number of boundaries, not the number of features.** All five do the same thing. 03 is shorter than 02 because it dropped ports; 05 is the longest because messaging alone is about 820 lines.
 - **Tests move outwards as boundaries move outwards.** 02 has the most unit tests per line of code; 05 is the only one that needs integration tests of its own plumbing and a whole distributed app to run its contract tests.
 - **More rules are not a sign of more quality.** 03 has the fewest enforcement tools (a single project) and the most need for tests; 04 and 05 have many rules because they have many boundaries.
 

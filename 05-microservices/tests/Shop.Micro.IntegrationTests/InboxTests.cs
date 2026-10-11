@@ -49,4 +49,26 @@ public sealed class InboxTests(Infrastructure infrastructure)
         Assert.False(await host.InScope((db, _) => db.Handled.AnyAsync(h => h.TestMessageId == failing.Id)));
         Assert.False(await host.InScope((db, _) => db.Set<InboxMessage>().AnyAsync(m => m.MessageId == messageId)));
     }
+
+    [Fact]
+    public async Task LostConsumer_IsReportedThenStartedAgain()
+    {
+        await using var host = await MessagingTestHost.StartAsync(infrastructure, consume: true);
+
+        // Deleting the queue makes the broker cancel the consumer: from then on nothing is consumed. Without
+        // recovery the service would stay "healthy" while its messages pile up nowhere.
+        await using (var channel = await host.Broker.CreateChannelAsync(cancellationToken: TestContext.Current.CancellationToken))
+        {
+            await channel.QueueDeleteAsync(host.Queue, ifUnused: false, ifEmpty: false, cancellationToken: TestContext.Current.CancellationToken);
+        }
+
+        await MessagingTestHost.WaitUntil(() => Task.FromResult(!host.IsConsuming), "the health check to report the lost consumer");
+        await MessagingTestHost.WaitUntil(() => Task.FromResult(host.IsConsuming), "the consumer to start again");
+
+        // The queue was declared again, with its bindings: a message sent now is handled.
+        var message = new TestMessage(Guid.NewGuid());
+        await host.PublishRawAsync(message, Guid.NewGuid());
+        await MessagingTestHost.WaitUntil(
+            () => host.InScope((db, _) => db.Handled.AnyAsync(h => h.TestMessageId == message.Id)), "the message sent after recovery");
+    }
 }

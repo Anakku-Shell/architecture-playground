@@ -75,7 +75,7 @@ Step by step, paying and the compensation: [guide §8.6](../docs/ARCHITECTURE_GU
 ## Trade-offs
 
 - **Good:** independent deployment and scaling per service, failure isolation where communication is asynchronous, hard data boundaries, observability from day one.
-- **Costs:** a broker, outbox, inbox, dispatcher, dead letters, gateway and tracing (about 750 lines of messaging alone); eventual consistency and `202` responses; harder testing and operations; the synchronous price lookup still couples order placement to Catalog's availability.
+- **Costs:** a broker, outbox, inbox, dispatcher, dead letters, gateway and tracing (about 820 lines of messaging alone); eventual consistency and `202` responses; harder testing and operations; the synchronous price lookup still couples order placement to Catalog's availability.
 - **Use it for** several teams that must deliver independently, or parts with very different scaling or availability needs, extracted one at a time from a modular monolith. **Avoid it** for a new product with moving boundaries, one small team, or data that needs strong consistency across services.
 
 ## Decisions

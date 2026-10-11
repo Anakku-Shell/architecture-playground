@@ -13,13 +13,13 @@ A service that saves a change and then publishes a message performs a **dual wri
 - **Outbox:** `IMessageOutbox.Add` stages an `outbox_messages` row in the service's DbContext, saved with the business change. `OutboxDispatcher` publishes committed rows in order, with publisher confirms and `mandatory`, marks them sent, and uses `FOR UPDATE SKIP LOCKED` so several instances can run. A row the broker refuses gets an attempt count and the error, and the dispatcher goes on with the next rows (no head-of-line blocking); after 5 refusals the row is left for a person. A broker outage stops the batch without counting. It wakes on commit (EF Core interceptors) or every 5 seconds.
 - **Inbox:** `RabbitMqConsumerHost` handles each delivery in one local transaction: inbox row (message id as primary key), consumer, outgoing messages, commit, then ack. A known id is acknowledged without running; a failure rolls back and is retried as above.
 - The trace context travels in the outbox row and a `traceparent` header.
-- A service is healthy only once its queue is declared and consumed.
+- A service is healthy only while its queue is declared and consumed. If the broker takes the consumer away (channel closed, consumer cancelled), the consumer host starts again on a new channel; a lost connection is recovered by the RabbitMQ client.
 - Integration tests against real PostgreSQL and RabbitMQ containers pin the behaviour (`InboxTests`, `OutboxTests`).
 
 ## Consequences
 
 - Good: a message is published if and only if its change committed; duplicates have no effect (effectively once).
 - Good: every step is visible, debuggable and tested.
-- Bad: about 750 lines to maintain, and still missing what a library provides: cleanup of old rows, message versioning, dead-letter replay, delayed retries that do not block the consumer.
+- Bad: about 820 lines to maintain, and still missing what a library provides: cleanup of old rows, message versioning, dead-letter replay, delayed retries that do not block the consumer.
 - Bad: one more table pair and a background worker per service; a little publishing latency.
 - In production, prefer a maintained library (MassTransit, Wolverine, NServiceBus) unless there is a strong reason not to.

@@ -112,6 +112,9 @@ public sealed class MessagingTestHost : IAsyncDisposable
 
     public Attempts Attempts => _host.Services.GetRequiredService<Attempts>();
 
+    /// <summary>What the service's health check reports about consuming.</summary>
+    public bool IsConsuming => _host.Services.GetRequiredService<ConsumerReadiness>().IsReady;
+
     public static async Task<MessagingTestHost> StartAsync(Infrastructure infrastructure, bool consume)
     {
         var exchange = $"test-{Guid.NewGuid():N}";
