@@ -3,7 +3,6 @@
     "ms-dotnettools.csdevkit",
     "humao.rest-client",
     "editorconfig.editorconfig",
-    "ms-azuretools.vscode-containers",
-    "bierner.markdown-mermaid"
+    "ms-azuretools.vscode-containers"
   ]
 }

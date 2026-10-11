@@ -183,9 +183,7 @@ When you open the repo, VS Code offers to install the extensions listed in `.vsc
 | **REST Client** (`humao.rest-client`) | Send the requests in `http/shop.http` with one click and see the response next to them |
 | **EditorConfig** (`editorconfig.editorconfig`) | Applies `.editorconfig` (indentation, line endings) while you type |
 | **Container Tools** (`ms-azuretools.vscode-containers`) | See and manage the Docker containers (PostgreSQL, RabbitMQ) from VS Code |
-| **Markdown Preview Mermaid Support** (`bierner.markdown-mermaid`) | Renders the **Mermaid** diagrams of this guide and of the READMEs in the Markdown preview (`Ctrl+Shift+V`) |
-
-*Mermaid* is a text format for diagrams: a few lines like `A --> B` become a drawing. GitHub renders it too.
+The diagrams of this guide and of the READMEs are written in **Mermaid**, a text format for diagrams: a few lines like `A --> B` become a drawing. GitHub renders them. If the Markdown preview of VS Code (`Ctrl+Shift+V`) shows them as code, the optional extension **Markdown Preview Mermaid Support** (`bierner.markdown-mermaid`) renders them; it is not in the recommended list.
 
 **Opening one version.** With C# Dev Kit, use *File → Open Folder* on the repo root, then in the Solution Explorer pick the `Shop.slnx` of the version you want to study. Each version is a separate solution: you look at one architecture at a time.
 
