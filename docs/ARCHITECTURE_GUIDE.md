@@ -414,6 +414,8 @@ These tests are the executable form of the architecture. If someone breaks a rul
 - **ArchUnitNET**: architecture rules as tests.
 - In 05, Aspire's testing host, which starts the whole distributed app for a test run.
 
+All of them also run on GitHub after every push, for every version: see "Where the guardrails run" in §12.3.
+
 ### 2.8 The shared contract suite
 
 `contract-tests/Shop.ContractTests` is the only code shared between versions. It is a library of **abstract** test classes (`ProductContractTests`, `OrderContractTests`, `PaymentContractTests`) that only talk HTTP to the public API. Each version's contract test project:
@@ -3067,6 +3069,27 @@ Three lessons from building them:
 
 Other guardrails work the same way: analyzers with warnings as errors (`TreatWarningsAsErrors`, CA1848 for logging), `dotnet format --verify-no-changes`, central package management (a new package needs a visible line in `Directory.Packages.props`, where a banned one stands out in review), and the **contract tests**, which turn the public API into an executable specification no internal refactoring may change.
 
+**Where the guardrails run.** A guardrail that runs only when someone remembers to run it is a suggestion. **Continuous integration** (**CI**) runs them on every change, on a clean machine that nobody configured by hand, and marks the change as passing or failing before anyone merges it. This repo uses **GitHub Actions**, GitHub's own CI service. A **workflow**, a YAML file in [`.github/workflows/`](../.github/workflows/checks.yml), tells GitHub what to do and when:
+
+```yaml
+on:
+  push:                      # every push to any branch
+jobs:
+  version:
+    runs-on: ubuntu-latest   # a fresh Linux machine from GitHub, with Docker
+    strategy:
+      matrix:
+        version: [01-layered, 02-clean-hexagonal, 03-vertical-slice, 04-modular-monolith, 05-microservices]
+    steps:
+      - run: dotnet build ${{ matrix.version }}/Shop.slnx -warnaserror
+      - run: dotnet format ${{ matrix.version }}/Shop.slnx --verify-no-changes --no-restore
+      - run: dotnet test ${{ matrix.version }}/Shop.slnx --no-build
+```
+
+A **job** is one machine running a list of **steps**; the **matrix** turns one job description into five jobs, one per version, run in parallel. A sixth job builds the shared contract suite. The checks are exactly the ones `CLAUDE.md` asks for before a change is done, so a person, an agent and the CI all apply the same definition of "done". The result appears next to every commit and on every pull request (a green tick or a red cross, with the log of the failing step), and the *Actions* tab of the repository shows every run. With the GitHub CLI, `gh run watch` follows the latest run from a terminal.
+
+For agents this matters twice. An agent can claim "all tests pass" without having run them; the CI result is evidence nobody can talk around. And the workflow file is itself a guardrail to protect: weakening it (removing a step, adding `continue-on-error`) deserves the same careful look as weakening an architecture test.
+
 ### 12.4 Verify: reviewing agent output against the rules
 
 Tests catch what can be stated as a rule. A review catches the rest. A checklist for reviewing an agent's change, ordered by how often each problem appears:
@@ -3241,6 +3264,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Context map**: how bounded contexts relate and communicate. [§3.7]
 - **Contract test**: a test of the public API over HTTP only; here, shared by all versions. [§2.8]
 - **Contracts project**: a module's public surface in its own project (`Shop.Modular.Catalog.Contracts`): the events it publishes and the queries it answers. Other modules reference it, never the module itself. [§7.2]
+- **Continuous integration (CI)**: running the build and the tests automatically on every change, on a clean machine, so a change is known to pass before it is merged. Here, GitHub Actions. [§12.3]
 - **Conway's law**: systems tend to mirror the communication structure of the organisation that builds them. [§10.1]
 - **Coupling**: how much one part depends on another. Low is good. [§3.5]
 - **CQRS**: Command Query Responsibility Segregation, handling changes and reads separately. [§3.8]
@@ -3286,6 +3310,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Fitness function**: an automated check that an architectural characteristic still holds, such as an architecture test or a performance budget. [§10.5]
 - **Foreign key (FK)**: a column whose value must exist as the primary key of another table; the database refuses rows that break it. [§4.2]
 - **Generic repository**: an `IRepository<T>` with the same CRUD methods for every entity, usually on top of an ORM that already provides them; rarely worth it. [§10.4]
+- **GitHub Actions**: GitHub's CI service. A workflow file in `.github/workflows/` says when to run (on every push here) and which jobs and steps to run. [§12.3]
 - **`global.json`**: the file that pins the .NET SDK, the test runner and project SDK versions for a folder. [§1.1]
 - **Head-of-line blocking**: one stuck item at the front of a queue holding back everything behind it; the outbox dispatcher avoids it by skipping a refused row. [§8.4]
 - **Health check**: an endpoint that reports whether a process is alive (`/alive`) or ready for traffic (`/health`: its database and queue work). Aspire waits on it before starting dependants. [§8.3]
@@ -3420,6 +3445,7 @@ Terms are added as each chapter introduces them. The section where a term is exp
 - **Volume (Docker)**: storage that outlives a container, used here to keep the database data. [§1.3]
 - **W3C Trace Context (`traceparent`)**: the standard header that carries the trace id from process to process; 05 also carries it through the outbox row and an AMQP header. [§8.3]
 - **WebApplicationFactory**: starts an ASP.NET Core app in memory for tests. [§2.7]
+- **Workflow (GitHub Actions)**: a YAML file in `.github/workflows/` with the triggers (`on:`) and the jobs of one CI pipeline; each job runs its steps on a fresh machine. Ours is `checks.yml`. [§12.3]
 - **xmin**: a PostgreSQL system column that changes on every update of a row; used as a row version for optimistic concurrency. [§4.5]
 - **xUnit**: the test framework used here (version 3). [§2.7]
 - **YAGNI**: "You Aren't Gonna Need It", do not build something until it is needed. [§5.2]

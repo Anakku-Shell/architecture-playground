@@ -19,6 +19,7 @@ The explanations live in `docs/ARCHITECTURE_GUIDE.md`. **Keep it in sync with th
 - `scripts/create-schemas.sh` / `.ps1`: idempotent SQL of each schema from the migrations. **Each new version (module, service) adds its entry to both scripts.**
 - `compose.yaml` + `docker/postgres/init.sql`: PostgreSQL for 01–04 on `localhost:5433` (`shop`/`shop`, dev only), databases `shop_layered`, `shop_clean`, `shop_slice`, `shop_modular`.
 - `http/shop.http`: sample requests for every version (REST Client).
+- `.github/workflows/checks.yml`: CI on GitHub Actions. On every push, per version: build with `-warnaserror`, `dotnet format --verify-no-changes`, all tests; plus a build of the contract suite. A new version or check goes there too. Never weaken it to get a green run.
 
 ## The public API is a contract
 
@@ -67,4 +68,4 @@ dotnet ef migrations add <Name> --project 05-microservices/src/Shop.Micro.Catalo
 
 - Work happens on `feature/architecture-playground`, one commit per phase (Conventional Commits, e.g. `feat(layered): …`), pushed to origin. Never merge; the owner merges into `develop`.
 - Do not install software on the machine; ask the owner.
-- Before declaring a change done: build with `-warnaserror`, all tests of the version green, `dotnet format --verify-no-changes`, docs updated.
+- Before declaring a change done: build with `-warnaserror`, all tests of the version green, `dotnet format --verify-no-changes`, docs updated. After pushing, the `Checks` workflow must be green (`gh run watch`).

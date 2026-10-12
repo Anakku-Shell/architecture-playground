@@ -51,6 +51,23 @@ public sealed class InboxTests(Infrastructure infrastructure)
     }
 
     [Fact]
+    public async Task Service_StopsPromptly_AfterHandlingMessages()
+    {
+        // A stopping service must let go quickly: an orchestrator (Aspire here, Kubernetes in production)
+        // waits a few seconds after asking, then kills the process.
+        var host = await MessagingTestHost.StartAsync(infrastructure, consume: true, ownConnection: true);
+        var message = new TestMessage(Guid.NewGuid());
+        await host.PublishRawAsync(message, Guid.NewGuid());
+        await MessagingTestHost.WaitUntil(
+            () => host.InScope((db, _) => db.Handled.AnyAsync(h => h.TestMessageId == message.Id)), "the message");
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        await host.DisposeAsync();
+
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(5), $"Stopping took {stopwatch.Elapsed.TotalSeconds:0.0} s.");
+    }
+
+    [Fact]
     public async Task LostConsumer_IsReportedThenStartedAgain()
     {
         await using var host = await MessagingTestHost.StartAsync(infrastructure, consume: true);

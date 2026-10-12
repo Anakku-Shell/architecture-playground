@@ -23,6 +23,8 @@ public sealed class Infrastructure : IAsyncLifetime
 
     public IConnection Broker { get; private set; } = null!;
 
+    public string BrokerConnectionString => _rabbit.GetConnectionString();
+
     public async ValueTask InitializeAsync()
     {
         await Task.WhenAll(_postgres.StartAsync(), _rabbit.StartAsync());
@@ -115,12 +117,27 @@ public sealed class MessagingTestHost : IAsyncDisposable
     /// <summary>What the service's health check reports about consuming.</summary>
     public bool IsConsuming => _host.Services.GetRequiredService<ConsumerReadiness>().IsReady;
 
-    public static async Task<MessagingTestHost> StartAsync(Infrastructure infrastructure, bool consume)
+    /// <summary>Starts a host on its own database, exchange and queue, and waits until it consumes.</summary>
+    /// <param name="infrastructure">The shared containers.</param>
+    /// <param name="consume">Whether the host consumes <see cref="TestMessage"/>.</param>
+    /// <param name="ownConnection">
+    /// <c>true</c>: the host opens its own broker connection and closes it when it stops, as the services do.
+    /// <c>false</c>: it borrows the shared one.
+    /// </param>
+    public static async Task<MessagingTestHost> StartAsync(Infrastructure infrastructure, bool consume, bool ownConnection = false)
     {
         var exchange = $"test-{Guid.NewGuid():N}";
         var queue = $"test-{Guid.NewGuid():N}";
         var builder = Host.CreateApplicationBuilder();
-        builder.Services.AddSingleton(infrastructure.Broker);
+        if (ownConnection)
+        {
+            builder.Services.AddSingleton(_ => new ConnectionFactory { Uri = new Uri(infrastructure.BrokerConnectionString) }.CreateConnectionAsync().GetAwaiter().GetResult());
+        }
+        else
+        {
+            builder.Services.AddSingleton(infrastructure.Broker);
+        }
+
         builder.Services.AddSingleton<Attempts>();
         var database = infrastructure.NewDatabase();
         builder.Services.AddDbContext<TestDbContext>(options => options.UseNpgsql(database));

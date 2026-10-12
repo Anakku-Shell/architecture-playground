@@ -1,5 +1,7 @@
 # architecture-playground
 
+[![Checks](https://github.com/Anakku-Shell/architecture-playground/actions/workflows/checks.yml/badge.svg)](https://github.com/Anakku-Shell/architecture-playground/actions/workflows/checks.yml)
+
 One small shop implemented **five times** in .NET, each time with a different architecture, so the styles can be compared side by side:
 
 | # | Folder | Architecture | Status |
@@ -58,6 +60,8 @@ dotnet run --project 05-microservices/src/Shop.Micro.AppHost
 ```
 
 `docker compose down` stops the database; `docker compose down -v` also deletes its data.
+
+Every push runs the same checks on GitHub ([`.github/workflows/checks.yml`](.github/workflows/checks.yml)): each version is built with warnings as errors, its formatting checked and all its tests run. The badge above shows the latest result; [guide §12.3](docs/ARCHITECTURE_GUIDE.md#123-enforce-guardrails-that-fail-the-build) explains it.
 
 ### The database on a new machine
 
