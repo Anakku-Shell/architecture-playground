@@ -1,4 +1,5 @@
 using Aspire.Hosting;
+using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Testing;
 using Shop.ContractTests;
 using Xunit;
@@ -31,6 +32,15 @@ public sealed class MicroShopApi : IShopApi, IAsyncLifetime
     {
         using var timeout = new CancellationTokenSource(StartupTimeout);
         var builder = await DistributedApplicationTestingBuilder.CreateAsync<Projects.Shop_Micro_AppHost>(timeout.Token);
+
+        // The tests run without the Aspire dashboard, but Aspire still points every service's telemetry at it
+        // (OTEL_EXPORTER_OTLP_ENDPOINT). With nothing listening there, a stopping service spent about 10
+        // seconds trying to send the traces and metrics it had buffered, longer than Aspire waits for a
+        // process to stop. No endpoint, no exporter (see ServiceDefaults). Guide: §8.7.
+        foreach (var project in builder.Resources.OfType<ProjectResource>())
+        {
+            project.Annotations.Add(new EnvironmentCallbackAnnotation(context => context.EnvironmentVariables.Remove("OTEL_EXPORTER_OTLP_ENDPOINT")));
+        }
         _app = await builder.BuildAsync(timeout.Token);
         await _app.StartAsync(timeout.Token);
 
