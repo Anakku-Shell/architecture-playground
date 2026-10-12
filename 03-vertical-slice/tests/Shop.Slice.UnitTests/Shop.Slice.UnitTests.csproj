@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <!-- Only the Domain folder is unit-tested; the slices are tested through HTTP (contract tests). -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Shop.Slice.Api\Shop.Slice.Api.csproj" />
+  </ItemGroup>
+
+</Project>

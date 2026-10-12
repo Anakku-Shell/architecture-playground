@@ -1,0 +1,8 @@
+<!--
+  Contracts: the messages the services exchange and the one HTTP shape another service reads. Plain records
+  with ids and values, no dependencies, no behaviour: it is the only code a sender and a receiver must
+  agree on, and every change to it is a change to a public API. Guide: §8.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+</Project>

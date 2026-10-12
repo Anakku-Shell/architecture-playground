@@ -1,0 +1,31 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Shop.Modular.Host/Shop.Modular.Host.csproj" />
+  </Folder>
+  <Folder Name="/src/BuildingBlocks/">
+    <Project Path="src/Shop.Modular.BuildingBlocks/Shop.Modular.BuildingBlocks.csproj" />
+    <Project Path="src/Shop.Modular.BuildingBlocks.Infrastructure/Shop.Modular.BuildingBlocks.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Catalog/">
+    <Project Path="src/Shop.Modular.Catalog/Shop.Modular.Catalog.csproj" />
+    <Project Path="src/Shop.Modular.Catalog.Contracts/Shop.Modular.Catalog.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/src/Ordering/">
+    <Project Path="src/Shop.Modular.Ordering.Application/Shop.Modular.Ordering.Application.csproj" />
+    <Project Path="src/Shop.Modular.Ordering.Contracts/Shop.Modular.Ordering.Contracts.csproj" />
+    <Project Path="src/Shop.Modular.Ordering.Domain/Shop.Modular.Ordering.Domain.csproj" />
+    <Project Path="src/Shop.Modular.Ordering.Infrastructure/Shop.Modular.Ordering.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Payments/">
+    <Project Path="src/Shop.Modular.Payments/Shop.Modular.Payments.csproj" />
+    <Project Path="src/Shop.Modular.Payments.Contracts/Shop.Modular.Payments.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Shop.Modular.ArchitectureTests/Shop.Modular.ArchitectureTests.csproj" />
+    <Project Path="tests/Shop.Modular.ContractTests/Shop.Modular.ContractTests.csproj" />
+    <Project Path="tests/Shop.Modular.UnitTests/Shop.Modular.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/contract-tests/">
+    <Project Path="../contract-tests/Shop.ContractTests/Shop.ContractTests.csproj" />
+  </Folder>
+</Solution>

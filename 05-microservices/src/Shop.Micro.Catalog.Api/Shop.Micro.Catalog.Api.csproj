@@ -1,0 +1,24 @@
+<!--
+  Catalog service, still simple CRUD inside (as the 04 module). It shares only Contracts, Messaging and
+  ServiceDefaults with the other services. Guide: §8.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Aspire.RabbitMQ.Client" />
+    <!-- Design-time services for "dotnet ef migrations add"; never shipped (PrivateAssets). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Micro.Contracts\Shop.Micro.Contracts.csproj" />
+    <ProjectReference Include="..\Shop.Micro.Messaging\Shop.Micro.Messaging.csproj" />
+    <ProjectReference Include="..\Shop.Micro.ServiceDefaults\Shop.Micro.ServiceDefaults.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Shop.Micro.UnitTests" />
+  </ItemGroup>
+
+</Project>

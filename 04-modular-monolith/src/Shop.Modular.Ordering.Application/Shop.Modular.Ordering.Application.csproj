@@ -1,0 +1,19 @@
+<!--
+  Ordering.Application: use cases, integration event handlers and ports. Besides its Domain it knows
+  BuildingBlocks (the event bus interface) and the Contracts of the modules it talks to, never their
+  code, and no framework. Guide: §7.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Modular.Ordering.Domain\Shop.Modular.Ordering.Domain.csproj" />
+    <ProjectReference Include="..\Shop.Modular.Ordering.Contracts\Shop.Modular.Ordering.Contracts.csproj" />
+    <ProjectReference Include="..\Shop.Modular.Catalog.Contracts\Shop.Modular.Catalog.Contracts.csproj" />
+    <ProjectReference Include="..\Shop.Modular.Payments.Contracts\Shop.Modular.Payments.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

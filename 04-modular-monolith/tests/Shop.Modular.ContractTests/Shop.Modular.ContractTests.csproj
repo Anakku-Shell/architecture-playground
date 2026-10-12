@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\contract-tests\Shop.ContractTests\Shop.ContractTests.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Modular.Host\Shop.Modular.Host.csproj" />
+  </ItemGroup>
+
+</Project>

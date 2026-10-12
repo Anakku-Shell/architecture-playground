@@ -1,0 +1,15 @@
+<!--
+  Host: the one process of the modular monolith and its composition root. It references each module's
+  entry project (the one with its IModule) and the shared building blocks, nothing inside a module.
+  Guide: §7.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Modular.BuildingBlocks.Infrastructure\Shop.Modular.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\Shop.Modular.Catalog\Shop.Modular.Catalog.csproj" />
+    <ProjectReference Include="..\Shop.Modular.Ordering.Infrastructure\Shop.Modular.Ordering.Infrastructure.csproj" />
+    <ProjectReference Include="..\Shop.Modular.Payments\Shop.Modular.Payments.csproj" />
+  </ItemGroup>
+
+</Project>

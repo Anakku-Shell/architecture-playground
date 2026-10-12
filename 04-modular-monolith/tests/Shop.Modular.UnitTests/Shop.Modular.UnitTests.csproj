@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+
+  <!-- Ordering's Domain and Application need nothing else (that is the point of its clean style). Catalog and
+       Payments expose their internals to this project only, for their few pure rules. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Shop.Modular.Ordering.Application\Shop.Modular.Ordering.Application.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Modular.BuildingBlocks.Infrastructure\Shop.Modular.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Modular.Catalog\Shop.Modular.Catalog.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Modular.Payments\Shop.Modular.Payments.csproj" />
+  </ItemGroup>
+
+</Project>

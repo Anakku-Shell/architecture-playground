@@ -1,0 +1,12 @@
+<!--
+  Payments.Contracts: the only public surface of the Payments module (integration events and query interfaces).
+  Other modules reference this project, never the module itself. It depends on BuildingBlocks only.
+  Guide: §7.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Modular.BuildingBlocks\Shop.Modular.BuildingBlocks.csproj" />
+  </ItemGroup>
+
+</Project>

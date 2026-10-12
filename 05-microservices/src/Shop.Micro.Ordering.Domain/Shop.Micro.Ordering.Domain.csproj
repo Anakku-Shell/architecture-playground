@@ -1,0 +1,8 @@
+<!--
+  Ordering.Domain: the Order aggregate and its value objects, as in version 04. The Ordering service is
+  still hexagonal inside: a microservice is a deployment boundary, not an excuse to drop the internal
+  architecture. It references nothing. Guide: §8.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+</Project>

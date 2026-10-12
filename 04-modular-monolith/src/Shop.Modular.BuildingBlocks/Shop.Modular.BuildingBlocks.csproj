@@ -1,0 +1,8 @@
+<!--
+  BuildingBlocks: the vocabulary every module shares (integration events, the event bus interface, the
+  common errors). It references nothing, so the Contracts projects and Ordering's Application can use it
+  without inheriting a framework. Guide: §7.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+</Project>

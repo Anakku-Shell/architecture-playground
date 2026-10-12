@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Shop.Clean.Api/Shop.Clean.Api.csproj" />
+    <Project Path="src/Shop.Clean.Application/Shop.Clean.Application.csproj" />
+    <Project Path="src/Shop.Clean.Domain/Shop.Clean.Domain.csproj" />
+    <Project Path="src/Shop.Clean.Infrastructure/Shop.Clean.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Shop.Clean.ArchitectureTests/Shop.Clean.ArchitectureTests.csproj" />
+    <Project Path="tests/Shop.Clean.ContractTests/Shop.Clean.ContractTests.csproj" />
+    <Project Path="tests/Shop.Clean.UnitTests/Shop.Clean.UnitTests.csproj" />
+  </Folder>
+  <Folder Name="/contract-tests/">
+    <Project Path="../contract-tests/Shop.ContractTests/Shop.ContractTests.csproj" />
+  </Folder>
+</Solution>

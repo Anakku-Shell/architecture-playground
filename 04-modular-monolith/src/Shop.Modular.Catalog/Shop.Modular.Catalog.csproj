@@ -1,0 +1,24 @@
+<!--
+  Catalog module, written as simple CRUD: endpoints that use the DbContext directly, no layers. Products
+  are data with a few validation rules, so a domain model would add ceremony and no protection.
+  Everything is internal except CatalogModule. Guide: §7.2.
+-->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- Design-time services for "dotnet ef migrations add"; never shipped (PrivateAssets). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shop.Modular.BuildingBlocks.Infrastructure\Shop.Modular.BuildingBlocks.Infrastructure.csproj" />
+    <ProjectReference Include="..\Shop.Modular.Catalog.Contracts\Shop.Modular.Catalog.Contracts.csproj" />
+    <ProjectReference Include="..\Shop.Modular.Ordering.Contracts\Shop.Modular.Ordering.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Shop.Modular.UnitTests" />
+  </ItemGroup>
+
+</Project>

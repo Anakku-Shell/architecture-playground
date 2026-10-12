@@ -1,0 +1,21 @@
+<!--
+  Applies to every project in every version folder: MSBuild walks up the directory tree
+  and imports the first Directory.Build.props it finds. One place for compiler settings,
+  so the five versions differ only in architecture, never in build configuration.
+  Guide: chapter 2, "Directory.Build.props".
+-->
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Needed for the build to report unused usings (IDE0005). XML docs themselves are optional: CS1591 off. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Mono.Cecil" />
+  </ItemGroup>
+
+  <!-- Every deployable project, so the rules can load and read all the compiled assemblies. (The AppHost's
+       own references do not copy the services' assemblies: it runs them, it does not link them.) -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Shop.Micro.Catalog.Api\Shop.Micro.Catalog.Api.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Micro.Ordering.Api\Shop.Micro.Ordering.Api.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Micro.Payments.Api\Shop.Micro.Payments.Api.csproj" />
+    <ProjectReference Include="..\..\src\Shop.Micro.Gateway\Shop.Micro.Gateway.csproj" />
+  </ItemGroup>
+
+</Project>

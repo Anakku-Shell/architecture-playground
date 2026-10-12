@@ -1,0 +1,55 @@
+name: Checks
+
+# Continuous integration: the checks CLAUDE.md asks for before a change is done, run by GitHub on a clean
+# machine for every push to any branch (pull requests from this repo are covered by the push of their
+# branch), or by hand from the Actions tab. Guide: §12.3, "Where the guardrails run".
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  # The shared contract suite must always build, even though no version is built here.
+  contract-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet build contract-tests/Shop.ContractTests -warnaserror
+
+  # One job per version, in parallel. Each is a standalone solution, so each is checked on its own:
+  # build with warnings as errors, formatting, and every test (unit, architecture, contract, and in 05
+  # integration). GitHub's Linux machines come with Docker, which Testcontainers and Aspire need.
+  version:
+    name: ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One failing version must not hide the result of the others.
+      fail-fast: false
+      matrix:
+        version:
+          - 01-layered
+          - 02-clean-hexagonal
+          - 03-vertical-slice
+          - 04-modular-monolith
+          - 05-microservices
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Build
+        run: dotnet build ${{ matrix.version }}/Shop.slnx -warnaserror
+      - name: Formatting
+        run: dotnet format ${{ matrix.version }}/Shop.slnx --verify-no-changes --no-restore
+      - name: Tests
+        run: dotnet test ${{ matrix.version }}/Shop.slnx --no-build

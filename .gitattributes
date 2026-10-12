@@ -1,0 +1,8 @@
+# Normalise line endings to LF in the repository and in the working tree, on every OS.
+# .editorconfig asks for LF and `dotnet format --verify-no-changes` checks it, so a checkout
+# that converted files to CRLF (core.autocrlf=true on Windows) would fail the format check.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
